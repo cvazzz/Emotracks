@@ -47,3 +47,12 @@ class Child(SQLModel, table=True):
     parent_id: int = Field(foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("parent_id", "name", name="uq_child_parent_name"),)
+
+
+class Alert(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    child_id: int = Field(foreign_key="child.id", index=True)
+    type: str
+    message: str
+    severity: str = Field(default="info")  # info | warning | critical
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

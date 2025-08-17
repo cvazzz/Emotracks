@@ -29,7 +29,22 @@ from .auth import (
     get_user_by_email,
     create_refresh_token,
 )
-from .schemas import RegisterRequest, LoginRequest, TokenResponse, UserOut, ChildCreate, ChildUpdate, ChildOut, ChildrenList
+from .schemas import (
+    RegisterRequest,
+    LoginRequest,
+    TokenResponse,
+    UserOut,
+    ChildCreate,
+    ChildUpdate,
+    ChildOut,
+    ChildrenList,
+    AlertCreate,
+    AlertOut,
+    AlertsList,
+)
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
+from fastapi import Response as FastAPIResponse
+from .models import Alert
 
 logger = structlog.get_logger()
 
@@ -44,6 +59,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="EmoTrack Kids API", version="0.1.0", lifespan=lifespan)
+
+# Métricas Prometheus
+REQUEST_COUNT = Counter(
+    "emotrack_requests_total", "Total de requests HTTP", ["method", "endpoint", "http_status"]
+)
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    response = await call_next(request)
+    try:
+        REQUEST_COUNT.labels(request.method, request.url.path, str(response.status_code)).inc()
+    except Exception:
+        pass
+    return response
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -132,6 +161,12 @@ def require_roles(*roles: UserRole):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics():
+    data = generate_latest()
+    return FastAPIResponse(content=data, media_type=CONTENT_TYPE_LATEST)
 
 
 # ---- Auth Endpoints ----
@@ -384,6 +419,44 @@ def delete_child(child_id: int, session=Depends(get_session), user=Depends(requi
         raise HTTPException(status_code=404, detail="not_found")
     session.delete(c)
     return JSONResponse(status_code=204, content=None)
+
+
+# ---- Alerts (placeholder simple) ----
+@app.post("/api/alerts", response_model=AlertOut, status_code=201)
+def create_alert(payload: AlertCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
+    # Podría incluir lógica de reglas; por ahora solo persistencia directa
+    alert = Alert(child_id=payload.child_id, type=payload.type, message=payload.message, severity=payload.severity or "info")
+    session.add(alert)
+    session.flush()
+    assert alert.id is not None
+    return {
+        "id": alert.id,
+        "child_id": alert.child_id,
+        "type": alert.type,
+        "message": alert.message,
+        "severity": alert.severity,
+        "created_at": alert.created_at.isoformat() if getattr(alert, "created_at", None) else None,
+    }
+
+
+@app.get("/api/alerts", response_model=AlertsList)
+def list_alerts(child_id: Optional[int] = None, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
+    stmt = select(Alert)
+    if child_id is not None:
+        stmt = stmt.where(Alert.child_id == child_id)
+    rows = list(session.exec(stmt))
+    result = [
+        {
+            "id": a.id,
+            "child_id": a.child_id,
+            "type": a.type,
+            "message": a.message,
+            "severity": a.severity,
+            "created_at": a.created_at.isoformat() if getattr(a, "created_at", None) else None,
+        }
+        for a in rows
+    ]
+    return {"items": result}
 
 
 class AttachResponsesPayload(BaseModel):

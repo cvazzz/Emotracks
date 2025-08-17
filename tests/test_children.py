@@ -158,3 +158,29 @@ def test_analyze_emotion_endpoint():
     assert r.status_code == 200
     body = r.json()
     assert body["analysis"]["primary_emotion"] in ("Neutral", "Mixto")
+
+
+def test_alerts_crud_minimal():
+    token = register_parent("alertparent@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child primero
+    r_child = client.post("/api/children", json={"name": "Alerta"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    # Crear alert
+    r_alert = client.post("/api/alerts", json={"child_id": cid, "type": "streak", "message": "Varias emociones negativas"}, headers=headers)
+    assert r_alert.status_code == 201
+    aid = r_alert.json()["id"]
+    # List alerts
+    r_list = client.get(f"/api/alerts?child_id={cid}", headers=headers)
+    assert r_list.status_code == 200
+    items = r_list.json()["items"]
+    assert any(a["id"] == aid for a in items)
+
+
+def test_metrics_endpoint():
+    # Hacer un par de hits y luego leer /metrics
+    client.get("/health")
+    m = client.get("/metrics")
+    assert m.status_code == 200
+    assert b"emotrack_requests_total" in m.content

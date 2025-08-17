@@ -27,6 +27,8 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
 - GET /api/responses (latest)
 - GET /api/responses/{id} (detail with analysis_json)
 - GET /api/dashboard/{child_ref} (child_ref = id numérico o nombre legacy; incluye objeto child si existe)
+- Alerts: POST /api/alerts, GET /api/alerts?child_id= (placeholder)
+- Métricas Prometheus: GET /metrics
 
 ### Realtime / WebSocket
 - Conexión: `GET ws://localhost:8000/ws`

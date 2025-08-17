@@ -52,3 +52,24 @@ class ChildOut(BaseModel):
 
 class ChildrenList(BaseModel):
     items: List[ChildOut]
+
+
+class AlertCreate(BaseModel):
+    child_id: int
+    type: str
+    message: str
+    severity: Optional[str] = "info"
+
+
+class AlertOut(BaseModel):
+    id: int
+    child_id: int
+    type: str
+    message: str
+    severity: str
+    created_at: Optional[str | None | object] = None  # aceptar raw; FastAPI serializa
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AlertsList(BaseModel):
+    items: List[AlertOut]
