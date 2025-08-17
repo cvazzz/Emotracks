@@ -1,0 +1,28 @@
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+extend-exclude = '''
+(
+  ^frontend/
+| ^node_modules/
+| ^uploads/
+)
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["frontend", "node_modules", "uploads"]
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "I",  # isort
+]
+ignore = [
+  "E203",  # whitespace before ':' (black compatibility)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend", "worker", "tests"]

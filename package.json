@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "celery-node": "^0.5.9",
+    "jsonwebtoken": "^9.0.2",
+    "passlib": "^0.3.0",
+    "redis": "^5.8.0"
+  }
+}
