@@ -70,12 +70,8 @@ def test_child_access_is_scoped_to_parent():
     headers2 = {"Authorization": f"Bearer {token2}"}
 
     r_create = client.post("/api/children", json={"name": "Ana"}, headers=headers1)
-    assert r_create.status_code in (201, 409)
-    if r_create.status_code == 201:
-        cid = r_create.json()["id"]
-    else:
-        r_list = client.get("/api/children", headers=headers1)
-        cid = next(c["id"] for c in r_list.json()["items"] if c["name"] == "Ana")
+    assert r_create.status_code == 201
+    cid = r_create.json()["id"]
 
     # Parent2 cannot access
     r_forbidden = client.get(f"/api/children/{cid}", headers=headers2)
@@ -93,13 +89,8 @@ def test_attach_responses_and_dashboard_by_id():
     headers = {"Authorization": f"Bearer {token}"}
     # Crear child
     r_child = client.post("/api/children", json={"name": "Carlos"}, headers=headers)
-    assert r_child.status_code in (201, 409)
-    if r_child.status_code == 201:
-        child_id = r_child.json()["id"]
-    else:
-        # Recuperar id listando
-        r_list = client.get("/api/children", headers=headers)
-        child_id = next(c["id"] for c in r_list.json()["items"] if c["name"] == "Carlos")
+    assert r_child.status_code == 201
+    child_id = r_child.json()["id"]
     # Crear dos responses sin child_id
     r1 = client.post("/api/submit-responses", data={"child_id": "Carlos", "text": "hola"})
     r2 = client.post("/api/submit-responses", data={"child_id": "Carlos", "text": "hola2"})
@@ -122,11 +113,8 @@ def test_create_response_direct_child_endpoint():
     token = register_parent("parentresp@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     r_child = client.post("/api/children", json={"name": "Lucia"}, headers=headers)
-    if r_child.status_code == 201:
-        child_id = r_child.json()["id"]
-    else:
-        r_list = client.get("/api/children", headers=headers)
-        child_id = next(c["id"] for c in r_list.json()["items"] if c["name"] == "Lucia")
+    assert r_child.status_code == 201
+    child_id = r_child.json()["id"]
     r_resp = client.post(f"/api/children/{child_id}/responses", json={"text": "Estoy feliz", "emoji": ":)"}, headers=headers)
     assert r_resp.status_code == 202
     data = r_resp.json()
@@ -139,6 +127,6 @@ def test_child_unique_constraint():
     token = register_parent("uniqueparent@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     r1 = client.post("/api/children", json={"name": "Duplicado"}, headers=headers)
-    assert r1.status_code in (201, 409)  # Puede existir de ejecuciones previas
+    assert r1.status_code == 201
     r2 = client.post("/api/children", json={"name": "Duplicado"}, headers=headers)
     assert r2.status_code == 409
