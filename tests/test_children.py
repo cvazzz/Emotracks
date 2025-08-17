@@ -130,3 +130,24 @@ def test_child_unique_constraint():
     assert r1.status_code == 201
     r2 = client.post("/api/children", json={"name": "Duplicado"}, headers=headers)
     assert r2.status_code == 409
+
+
+def test_response_detail_and_task_status_flow():
+    token = register_parent("resptest@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child
+    r_child = client.post("/api/children", json={"name": "Detalle"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    # Crear response directo
+    r_resp = client.post(f"/api/children/{cid}/responses", json={"text": "Hola mundo"}, headers=headers)
+    assert r_resp.status_code == 202
+    resp_id = r_resp.json()["response_id"]
+    task_id = r_resp.json()["task_id"]
+    # Consultar detalle (puede estar aún QUEUED pero analysis_json None)
+    detail = client.get(f"/api/responses/{resp_id}")
+    assert detail.status_code == 200
+    # Estado de tarea
+    status = client.get(f"/api/response-status/{task_id}")
+    assert status.status_code == 200
+    assert "status" in status.json()

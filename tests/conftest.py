@@ -39,3 +39,17 @@ def _isolate_db() -> Iterator[None]:
         except Exception:
             pass
     yield
+
+
+@pytest.fixture
+def parent_token() -> str:
+    """Registra y retorna un token de un parent nuevo por test."""
+    from fastapi.testclient import TestClient
+    from backend.app.main import app
+    client = TestClient(app)
+    email = f"parent_{os.urandom(4).hex()}@example.com"
+    r = client.post("/api/auth/register", json={"email": email, "password": "pass123", "role": "parent"})
+    assert r.status_code in (200,201), r.text
+    login = client.post("/api/auth/login", json={"email": email, "password": "pass123"})
+    assert login.status_code == 200
+    return login.json()["access_token"]

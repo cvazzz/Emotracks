@@ -28,6 +28,27 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
 - GET /api/responses/{id} (detail with analysis_json)
 - GET /api/dashboard/{child_ref} (child_ref = id numérico o nombre legacy; incluye objeto child si existe)
 
+### Realtime / WebSocket
+- Conexión: `GET ws://localhost:8000/ws`
+- Mensajes del servidor (JSON):
+   - `{"type": "welcome"}` al conectar.
+   - `{"type": "task_queued", "task_id": ..., "response_id": ..., "status": "QUEUED"}` cuando se encola una tarea.
+   - `{"type": "task_completed", "response_id": ..., "status": "COMPLETED", "emotion": "..."}` cuando finaliza el análisis (mock actual).
+- Si Redis no está disponible se envía `warning` y el socket funciona en modo eco.
+
+### Export OpenAPI
+Para exportar el JSON del esquema OpenAPI a `openapi.json`:
+
+```bash
+python - <<'PY'
+from backend.app.main import app
+import json
+import pathlib
+pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2))
+print('openapi.json generado')
+PY
+```
+
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings
 - worker: (uses same image; tasks live under backend/app)
@@ -49,7 +70,9 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
  - Optional: set AUTO_MIGRATE=1 in env to auto-run `alembic upgrade head` on startup (dev/tests only).
 
 ## Tests
-- Backend unit tests with pytest. In CI, Celery runs in eager mode and SQLite is used with a lightweight schema shim for evolving columns like analysis_json.
+- Backend unit tests con pytest. Celery corre en modo eager (sin broker externo) y se fuerza SQLite (`tests/conftest.py`).
+- Aislamiento por test: fixture que limpia tablas principales (`user`, `child`, `response`).
+- Ejecutar: `pytest -q`.
 
 ## Frontend Web (Flutter) y servicio desde el backend
 
