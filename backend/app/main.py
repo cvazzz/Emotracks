@@ -425,7 +425,10 @@ def delete_child(child_id: int, session=Depends(get_session), user=Depends(requi
 @app.post("/api/alerts", response_model=AlertOut, status_code=201)
 def create_alert(payload: AlertCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
     # Podría incluir lógica de reglas; por ahora solo persistencia directa
-    alert = Alert(child_id=payload.child_id, type=payload.type, message=payload.message, severity=payload.severity or "info")
+    severity = (payload.severity or "info").lower()
+    if severity not in {"info", "warning", "critical"}:
+        raise HTTPException(status_code=400, detail="severity_invalid")
+    alert = Alert(child_id=payload.child_id, type=payload.type, message=payload.message, severity=severity)
     session.add(alert)
     session.flush()
     assert alert.id is not None
@@ -457,6 +460,15 @@ def list_alerts(child_id: Optional[int] = None, session=Depends(get_session), us
         for a in rows
     ]
     return {"items": result}
+
+
+@app.delete("/api/alerts/{alert_id}", status_code=204)
+def delete_alert(alert_id: int, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
+    a = session.get(Alert, alert_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="not_found")
+    session.delete(a)
+    return JSONResponse(status_code=204, content=None)
 
 
 class AttachResponsesPayload(BaseModel):

@@ -27,7 +27,7 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
 - GET /api/responses (latest)
 - GET /api/responses/{id} (detail with analysis_json)
 - GET /api/dashboard/{child_ref} (child_ref = id numérico o nombre legacy; incluye objeto child si existe)
- - Alerts: POST /api/alerts, GET /api/alerts?child_id= (placeholder; migración 0006)
+- Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id} (migración 0006; severities: info|warning|critical)
 - Métricas Prometheus: GET /metrics
 
 ### Realtime / WebSocket
@@ -92,7 +92,8 @@ pwsh scripts/tasks.ps1 openapi
 - Backend unit tests con pytest. Celery corre en modo eager (sin broker externo) y se fuerza SQLite (`tests/conftest.py`).
 - Aislamiento por test: fixture que limpia tablas principales (`user`, `child`, `response`).
 - Ejecutar: `pytest -q`.
- - `celery_app` en tests habilita `task_store_eager_result` para poder consultar estado sin warnings.
+- `celery_app` en tests habilita `task_store_eager_result` para poder consultar estado sin warnings.
+- CI genera reporte de cobertura (coverage.xml) como artifact.
 
 ## Frontend Web (Flutter) y servicio desde el backend
 

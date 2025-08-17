@@ -168,7 +168,7 @@ def test_alerts_crud_minimal():
     assert r_child.status_code == 201
     cid = r_child.json()["id"]
     # Crear alert
-    r_alert = client.post("/api/alerts", json={"child_id": cid, "type": "streak", "message": "Varias emociones negativas"}, headers=headers)
+    r_alert = client.post("/api/alerts", json={"child_id": cid, "type": "streak", "message": "Varias emociones negativas", "severity": "warning"}, headers=headers)
     assert r_alert.status_code == 201
     aid = r_alert.json()["id"]
     # List alerts
@@ -176,6 +176,12 @@ def test_alerts_crud_minimal():
     assert r_list.status_code == 200
     items = r_list.json()["items"]
     assert any(a["id"] == aid for a in items)
+    # Invalid severity
+    bad = client.post("/api/alerts", json={"child_id": cid, "type": "streak", "message": "bad", "severity": "xxx"}, headers=headers)
+    assert bad.status_code == 400
+    # Delete
+    r_del = client.delete(f"/api/alerts/{aid}", headers=headers)
+    assert r_del.status_code == 204
 
 
 def test_metrics_endpoint():

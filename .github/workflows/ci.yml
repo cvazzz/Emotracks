@@ -7,53 +7,6 @@ on:
     branches: [ main, master ]
 
 jobs:
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-
-      - name: Lint (ruff)
-        run: |
-          ruff check .
-
-      - name: Run tests
-        env:
-          DATABASE_URL: sqlite:///./test.db
-          SECRET_KEY: test-ci-secret
-          CELERY_TASK_ALWAYS_EAGER: "1"
-          AUTO_MIGRATE: "0"
-        run: |
-          pytest -q
-
-      - name: Upload test db artifact (optional)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-db
-          path: test.db
-          if-no-files-found: ignore
-name: CI
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
-jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -112,4 +65,11 @@ jobs:
           CELERY_EAGER: '1'
           DATABASE_URL: 'sqlite:///./test.db'
         run: |
-          pytest -q
+          pytest --cov=backend.app --cov-report=xml --cov-report=term-missing -q
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
