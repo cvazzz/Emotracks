@@ -17,7 +17,7 @@ from sqlmodel import select
 
 from .db import get_session, init_db
 from .logging_setup import configure_logging
-from .models import Response, UserRole, ResponseStatus
+from .models import Response, UserRole, ResponseStatus, Child
 from .settings import settings
 from .tasks import enqueue_analysis_task, get_task_status
 from .auth import (
@@ -28,7 +28,7 @@ from .auth import (
     get_user_by_email,
     create_refresh_token,
 )
-from .schemas import RegisterRequest, LoginRequest, TokenResponse, UserOut
+from .schemas import RegisterRequest, LoginRequest, TokenResponse, UserOut, ChildCreate, ChildUpdate, ChildOut, ChildrenList
 
 logger = structlog.get_logger()
 
@@ -298,6 +298,58 @@ async def dashboard(child_id: str, session=Depends(get_session), user=Depends(re
         "by_emotion": by_emotion,
         "series_by_day": series_by_day,
     }
+
+
+# ---- Children CRUD ----
+@app.post("/api/children", response_model=ChildOut, status_code=201)
+def create_child(payload: ChildCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    child = Child(name=payload.name, age=payload.age, notes=payload.notes, parent_id=parent_id)
+    session.add(child)
+    session.flush()
+    # child.id no será None tras flush
+    assert child.id is not None
+    return ChildOut(id=child.id, name=child.name, age=child.age, notes=child.notes, parent_id=child.parent_id)
+
+
+@app.get("/api/children", response_model=ChildrenList)
+def list_children(session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    items = list(session.exec(select(Child).where(Child.parent_id == parent_id)))
+    return {"items": [ChildOut.model_validate(c) for c in items]}
+
+
+@app.get("/api/children/{child_id}", response_model=ChildOut)
+def get_child(child_id: int, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    c = session.get(Child, child_id)
+    if c is None or c.parent_id != parent_id:
+        raise HTTPException(status_code=404, detail="not_found")
+    return ChildOut.model_validate(c)
+
+
+@app.patch("/api/children/{child_id}", response_model=ChildOut)
+def update_child(child_id: int, payload: ChildUpdate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    c = session.get(Child, child_id)
+    if c is None or c.parent_id != parent_id:
+        raise HTTPException(status_code=404, detail="not_found")
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(c, k, v)
+    session.add(c)
+    session.flush()
+    return ChildOut.model_validate(c)
+
+
+@app.delete("/api/children/{child_id}", status_code=204)
+def delete_child(child_id: int, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    c = session.get(Child, child_id)
+    if c is None or c.parent_id != parent_id:
+        raise HTTPException(status_code=404, detail="not_found")
+    session.delete(c)
+    return JSONResponse(status_code=204, content=None)
 
 
 @app.websocket("/ws")

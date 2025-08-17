@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional
+from typing import Optional, List
 
 
 class RegisterRequest(BaseModel):
@@ -27,3 +27,28 @@ class UserOut(BaseModel):
 
     # Usar ConfigDict (Pydantic v2) para evitar deprecación
     model_config = ConfigDict(from_attributes=True)
+
+
+class ChildCreate(BaseModel):
+    name: str
+    age: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ChildUpdate(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ChildOut(BaseModel):
+    id: int
+    name: str
+    age: Optional[int]
+    notes: Optional[str]
+    parent_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ChildrenList(BaseModel):
+    items: List[ChildOut]
