@@ -79,6 +79,22 @@ def _ensure_sqlite_columns() -> None:
         if "analysis_json" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE response ADD COLUMN analysis_json TEXT"))
+        if "child_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE response ADD COLUMN child_id INTEGER"))
+        # Create child table if not exists (simple check)
+        if "child" not in insp.get_table_names():
+            with engine.begin() as conn:
+                conn.execute(text("""
+                CREATE TABLE child (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    age INTEGER NULL,
+                    notes TEXT NULL,
+                    parent_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """))
     except Exception:
         # Best-effort; ignore if not applicable
         pass

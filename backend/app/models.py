@@ -35,6 +35,7 @@ class Response(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: ResponseStatus = Field(default=ResponseStatus.QUEUED)
     analysis_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    child_id: Optional[int] = Field(default=None, foreign_key="child.id", index=True)
 
 
 class Child(SQLModel, table=True):

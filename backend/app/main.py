@@ -216,7 +216,11 @@ async def submit_responses(
         logger.info("received_audio", filename=audio_file.filename)
     # Minimal persistence (status QUEUED)
     child_name = (child_id or "child").strip() or "child"
-    row = Response(child_name=child_name, emotion="Unknown", status=ResponseStatus.QUEUED)
+    # child_id numérico opcional si viene convertible
+    numeric_child_id = None
+    if child_id and child_id.isdigit():
+        numeric_child_id = int(child_id)
+    row = Response(child_name=child_name, child_id=numeric_child_id, emotion="Unknown", status=ResponseStatus.QUEUED)
     session.add(row)
     session.flush()  # to get id
 
