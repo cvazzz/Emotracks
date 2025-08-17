@@ -151,3 +151,10 @@ def test_response_detail_and_task_status_flow():
     status = client.get(f"/api/response-status/{task_id}")
     assert status.status_code == 200
     assert "status" in status.json()
+
+
+def test_analyze_emotion_endpoint():
+    r = client.post("/api/analyze-emotion", json={"text": "Me siento bien"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["analysis"]["primary_emotion"] in ("Neutral", "Mixto")

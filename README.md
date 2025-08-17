@@ -73,6 +73,7 @@ PY
 - Backend unit tests con pytest. Celery corre en modo eager (sin broker externo) y se fuerza SQLite (`tests/conftest.py`).
 - Aislamiento por test: fixture que limpia tablas principales (`user`, `child`, `response`).
 - Ejecutar: `pytest -q`.
+ - `celery_app` en tests habilita `task_store_eager_result` para poder consultar estado sin warnings.
 
 ## Frontend Web (Flutter) y servicio desde el backend
 

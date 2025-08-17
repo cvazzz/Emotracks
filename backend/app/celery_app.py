@@ -22,6 +22,8 @@ celery_app = Celery("emotrack", broker=BROKER_URL, backend=RESULT_BACKEND)
 if _under_pytest or _force_eager:
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
+    # Permite que AsyncResult devuelva estado y evita warning de backend al consultar
+    celery_app.conf.task_store_eager_result = True
 
 celery_app.conf.update(
     task_serializer="json",
