@@ -14,15 +14,19 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
 4. Frontend (opcional):
    - Construye Flutter Web y sirve estáticos desde FastAPI (ver sección Frontend Web)
 
-## Endpoints
+## Endpoints (MVP actual)
 - GET /health
+- Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, GET /api/auth/me
+- Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
+- Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
+- Crear response directo para child: POST /api/children/{id}/responses
 - POST /api/analyze-emotion (sync mock)
 - POST /api/submit-responses → 202 { task_id }
 - GET /api/response-status/{task_id}
 - WS /ws (stub; future Redis Pub/Sub bridge)
 - GET /api/responses (latest)
 - GET /api/responses/{id} (detail with analysis_json)
-- GET /api/dashboard/{child_id}
+- GET /api/dashboard/{child_ref} (child_ref = id numérico o nombre legacy; incluye objeto child si existe)
 
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings

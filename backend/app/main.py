@@ -97,6 +97,13 @@ class AnalyzeResponse(BaseModel):
     analysis: EmotionalAnalysis
 
 
+class CreateChildResponsePayload(BaseModel):
+    # child_id se obtiene de la ruta; no debe ser obligatorio en el body.
+    # Se acepta solo texto y emoji opcionales.
+    text: Optional[str] = None
+    emoji: Optional[str] = None
+
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -301,8 +308,19 @@ async def dashboard(child_ref: str, session=Depends(get_session), user=Depends(r
         by_emotion[r.emotion] = by_emotion.get(r.emotion, 0) + 1
         day = r.created_at.date().isoformat()
         series_by_day[day] = series_by_day.get(day, 0) + 1
+    child_meta = None
+    if child_ref.isdigit():
+        cobj = session.get(Child, int(child_ref))
+        if cobj:
+            child_meta = {"id": cobj.id, "name": cobj.name, "age": cobj.age}
+    else:
+        # intento buscar child por nombre para parent/admin/psychologist (no estricto)
+        cobj = session.exec(select(Child).where(Child.name == child_ref)).first()
+        if cobj:
+            child_meta = {"id": cobj.id, "name": cobj.name, "age": cobj.age}
     return {
         "child_ref": child_ref,
+        "child": child_meta,
         "total": len(rows),
         "by_emotion": by_emotion,
         "series_by_day": series_by_day,
@@ -388,6 +406,22 @@ def attach_responses(child_id: int, payload: AttachResponsesPayload, session=Dep
                 r.child_name = c.name
             updated += 1
     return {"attached": updated}
+
+
+@app.post("/api/children/{child_id}/responses", status_code=202)
+def create_response_for_child(child_id: int, payload: CreateChildResponsePayload | None = None, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    c = session.get(Child, child_id)
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    if c is None or c.parent_id != parent_id:
+        raise HTTPException(status_code=404, detail="child_not_found")
+    text = payload.text if payload else None
+    emoji = payload.emoji if payload else None
+    row = Response(child_name=c.name, child_id=child_id, emotion="Unknown", status=ResponseStatus.QUEUED)
+    session.add(row)
+    session.flush()
+    task_id = enqueue_analysis_task({"text": text or "", "child_id": child_id, "emoji": emoji, "response_id": row.id})
+    _safe_publish(WS_CHANNEL, {"type": "task_queued", "task_id": task_id, "response_id": row.id, "status": "QUEUED"})
+    return {"status": "accepted", "task_id": task_id, "response_id": row.id}
 
 
 @app.websocket("/ws")

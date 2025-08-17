@@ -115,6 +115,24 @@ def test_attach_responses_and_dashboard_by_id():
     assert dash.status_code == 200
     body = dash.json()
     assert body["total"] >= 1
+    assert body["child"] is not None
+
+
+def test_create_response_direct_child_endpoint():
+    token = register_parent("parentresp@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    r_child = client.post("/api/children", json={"name": "Lucia"}, headers=headers)
+    if r_child.status_code == 201:
+        child_id = r_child.json()["id"]
+    else:
+        r_list = client.get("/api/children", headers=headers)
+        child_id = next(c["id"] for c in r_list.json()["items"] if c["name"] == "Lucia")
+    r_resp = client.post(f"/api/children/{child_id}/responses", json={"text": "Estoy feliz", "emoji": ":)"}, headers=headers)
+    assert r_resp.status_code == 202
+    data = r_resp.json()
+    assert "task_id" in data and "response_id" in data
+    dash = client.get(f"/api/dashboard/{child_id}", headers=headers)
+    assert dash.status_code == 200
 
 
 def test_child_unique_constraint():
