@@ -49,6 +49,23 @@ print('openapi.json generado')
 PY
 ```
 
+### Tareas rápidas (Makefile / PowerShell)
+
+Makefile (Linux/Mac):
+```
+make install
+make test
+make openapi
+make coverage
+```
+
+PowerShell (Windows) con `scripts\tasks.ps1`:
+```
+pwsh scripts/tasks.ps1 install
+pwsh scripts/tasks.ps1 test
+pwsh scripts/tasks.ps1 openapi
+```
+
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings
 - worker: (uses same image; tasks live under backend/app)
