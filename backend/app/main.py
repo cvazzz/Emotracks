@@ -18,6 +18,7 @@ from sqlmodel import select
 from .db import get_session, init_db
 from .logging_setup import configure_logging
 from .models import Response, UserRole, ResponseStatus, Child
+from sqlalchemy.exc import IntegrityError
 from .settings import settings
 from .tasks import enqueue_analysis_task, get_task_status
 from .auth import (
@@ -286,10 +287,14 @@ async def get_response(response_id: int, session=Depends(get_session)):
     }
 
 
-@app.get("/api/dashboard/{child_id}")
-async def dashboard(child_id: str, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN, UserRole.PARENT, UserRole.PSYCHOLOGIST))):
-    # Agregados simples por nombre de niño (placeholder de child_id)
-    rows = list(session.exec(select(Response).where(Response.child_name == child_id)))
+@app.get("/api/dashboard/{child_ref}")
+async def dashboard(child_ref: str, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN, UserRole.PARENT, UserRole.PSYCHOLOGIST))):
+    # child_ref puede ser id numérico (child_id) o nombre legacy
+    if child_ref.isdigit():
+        stmt = select(Response).where(Response.child_id == int(child_ref))
+    else:
+        stmt = select(Response).where(Response.child_name == child_ref)
+    rows = list(session.exec(stmt))
     by_emotion: dict[str, int] = {}
     series_by_day: dict[str, int] = {}
     for r in rows:
@@ -297,7 +302,7 @@ async def dashboard(child_id: str, session=Depends(get_session), user=Depends(re
         day = r.created_at.date().isoformat()
         series_by_day[day] = series_by_day.get(day, 0) + 1
     return {
-        "child_id": child_id,
+        "child_ref": child_ref,
         "total": len(rows),
         "by_emotion": by_emotion,
         "series_by_day": series_by_day,
@@ -308,9 +313,16 @@ async def dashboard(child_id: str, session=Depends(get_session), user=Depends(re
 @app.post("/api/children", response_model=ChildOut, status_code=201)
 def create_child(payload: ChildCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
     parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    # Validación manual por compatibilidad SQLite test (puede no recrear constraint al vuelo)
+    existing = session.exec(select(Child).where(Child.parent_id == parent_id, Child.name == payload.name)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="child_name_exists")
     child = Child(name=payload.name, age=payload.age, notes=payload.notes, parent_id=parent_id)
     session.add(child)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="child_name_exists")
     # child.id no será None tras flush
     assert child.id is not None
     return ChildOut(id=child.id, name=child.name, age=child.age, notes=child.notes, parent_id=child.parent_id)
@@ -354,6 +366,28 @@ def delete_child(child_id: int, session=Depends(get_session), user=Depends(requi
         raise HTTPException(status_code=404, detail="not_found")
     session.delete(c)
     return JSONResponse(status_code=204, content=None)
+
+
+class AttachResponsesPayload(BaseModel):
+    response_ids: list[int]
+
+
+@app.post("/api/children/{child_id}/attach-responses", status_code=200)
+def attach_responses(child_id: int, payload: AttachResponsesPayload, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    # Verificar child pertenece al parent
+    c = session.get(Child, child_id)
+    parent_id = user["id"] if isinstance(user, dict) else getattr(user, "id")
+    if c is None or c.parent_id != parent_id:
+        raise HTTPException(status_code=404, detail="child_not_found")
+    updated = 0
+    for rid in payload.response_ids:
+        r = session.get(Response, rid)
+        if r and (r.child_id is None):
+            r.child_id = child_id
+            if r.child_name == "child" or r.child_name == "":
+                r.child_name = c.name
+            updated += 1
+    return {"attached": updated}
 
 
 @app.websocket("/ws")

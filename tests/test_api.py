@@ -90,5 +90,5 @@ def test_analysis_json_and_dashboard():
     dash = client.get("/api/dashboard/ChildA", headers={"Authorization": f"Bearer {token}"})
     assert dash.status_code == 200
     dash_body = dash.json()
-    assert dash_body["child_id"] == "ChildA"
+    assert dash_body["child_ref"] == "ChildA"
     assert dash_body["total"] >= 2
