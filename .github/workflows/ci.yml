@@ -72,4 +72,13 @@ jobs:
         with:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
+
+        - name: Upload to Codecov
+          uses: codecov/codecov-action@v4
+          with:
+            files: coverage.xml
+            flags: backend
+            fail_ci_if_error: false
+          env:
+            CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
           if-no-files-found: error

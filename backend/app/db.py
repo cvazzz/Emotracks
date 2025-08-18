@@ -95,6 +95,39 @@ def _ensure_sqlite_columns() -> None:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """))
+        # Ensure alert table has rule_version if table exists
+        if "alert" in insp.get_table_names():
+            alert_cols = {c["name"] for c in insp.get_columns("alert")}
+            if "rule_version" not in alert_cols:
+                try:
+                    with engine.begin() as conn:
+                        try:
+                            conn.execute(text("ALTER TABLE alert ADD COLUMN rule_version VARCHAR(50) NULL"))
+                        except Exception:
+                            # Fallback: recreate table (SQLite sin ALTER avanzado)
+                            conn.execute(text("""
+                                CREATE TABLE IF NOT EXISTS alert__new (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    child_id INTEGER NOT NULL,
+                                    type TEXT NOT NULL,
+                                    message TEXT NOT NULL,
+                                    severity TEXT NOT NULL DEFAULT 'info',
+                                    rule_version VARCHAR(50) NULL,
+                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                    FOREIGN KEY(child_id) REFERENCES child(id)
+                                )
+                            """))
+                            existing_cols = "id, child_id, type, message, severity, created_at"
+                            conn.execute(text(f"INSERT INTO alert__new ({existing_cols}) SELECT {existing_cols} FROM alert"))
+                            conn.execute(text("DROP TABLE alert"))
+                            conn.execute(text("ALTER TABLE alert__new RENAME TO alert"))
+                            # Recreate index
+                            try:
+                                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_alert_child_id ON alert(child_id)"))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
     except Exception:
         # Best-effort; ignore if not applicable
         pass

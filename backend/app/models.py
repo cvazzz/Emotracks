@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, DateTime, String
 from sqlmodel import Field, SQLModel
 from sqlalchemy import UniqueConstraint
 
@@ -32,8 +32,11 @@ class User(SQLModel, table=True):
 class Response(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     child_name: str
-    emotion: str = "Unknown"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    emotion: str = Field(default="Unknown", sa_column=Column(String, index=True))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), index=True),
+    )
     status: ResponseStatus = Field(default=ResponseStatus.QUEUED)
     analysis_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     child_id: Optional[int] = Field(default=None, foreign_key="child.id", index=True)
@@ -55,4 +58,5 @@ class Alert(SQLModel, table=True):
     type: str
     message: str
     severity: str = Field(default="info")  # info | warning | critical
+    rule_version: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

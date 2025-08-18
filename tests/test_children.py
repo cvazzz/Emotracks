@@ -1,4 +1,5 @@
 import os
+import time
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,11 +10,21 @@ from backend.app.main import app  # noqa: E402
 from backend.app.db import init_db, session_scope  # noqa: E402
 from backend.app.models import Child  # noqa: E402
 
-client = TestClient(app)
+client = TestClient(app, raise_server_exceptions=False)
 
 @pytest.fixture(autouse=True)
 def setup_db():
     init_db()
+    # Limpiar tablas principales para aislamiento sencillo (SQLite)
+    from backend.app.db import session_scope as _sc
+    from backend.app.models import User, Child as _Child, Response as _Response, Alert as _Alert
+    from sqlalchemy import delete
+    with _sc() as s:
+        for model in (_Alert, _Response, _Child, User):
+            try:
+                s.execute(delete(model))
+            except Exception:
+                pass
     yield
 
 
@@ -190,3 +201,137 @@ def test_metrics_endpoint():
     m = client.get("/metrics")
     assert m.status_code == 200
     assert b"emotrack_requests_total" in m.content
+    assert b"emotrack_request_latency_seconds" in m.content
+    assert b"emotrack_request_errors_total" in m.content
+    assert b"emotrack_tasks_total" in m.content
+    # Probar contador de errores
+    boom = client.get("/api/debug/boom")
+    assert boom.status_code == 500
+    m2 = client.get("/metrics")
+    assert b"emotrack_request_errors_total" in m2.content
+
+
+def test_auto_alert_high_intensity_and_streak():
+    token = register_parent("autoalert@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child
+    r_child = client.post("/api/children", json={"name": "Pedro"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    # Generar 3 responses para racha (mock usa siempre Mixto con intensidad 0.2 -> no debería disparar intensidad alta)
+    for i in range(3):
+        rr = client.post(f"/api/children/{cid}/responses", json={"text": f"resp {i}"}, headers=headers)
+        assert rr.status_code == 202
+    # List alerts (puede existir la de racha)
+    lst = client.get(f"/api/alerts?child_id={cid}", headers=headers)
+    assert lst.status_code == 200
+    items = lst.json()["items"]
+    # La alerta de racha es opcional si las tres emociones permanecen iguales (Mixto)
+    # Verificamos que no se generó ninguna critical (porque intensidad mock = 0.2)
+    assert not any(a["severity"] == "critical" for a in items)
+
+
+def test_alert_rule_version_and_dedup():
+    token = register_parent("rvparent@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child
+    r_child = client.post("/api/children", json={"name": "RV"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    payload = {"child_id": cid, "type": "custom_rule", "message": "Mensaje A", "severity": "info"}
+    r1 = client.post("/api/alerts", json=payload, headers=headers)
+    assert r1.status_code == 201, r1.text
+    body1 = r1.json()
+    # Con la introducción de RULE_VERSION_V2 las alertas manuales usan ahora 'v2'
+    assert body1.get("rule_version") == "v2"
+    r2 = client.post("/api/alerts", json=payload, headers=headers)
+    assert r2.status_code == 201
+    body2 = r2.json()
+    # Debe devolver el mismo id (idempotencia ligera)
+    assert body1["id"] == body2["id"]
+    # List sólo una alerta de ese tipo
+    lst = client.get(f"/api/alerts?child_id={cid}", headers=headers)
+    assert lst.status_code == 200
+    same_type = [a for a in lst.json()["items"] if a["type"] == "custom_rule"]
+    assert len(same_type) == 1
+
+
+def test_auto_alert_intensity_high_and_avg():
+    token = register_parent("ruleavg@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child
+    r_child = client.post("/api/children", json={"name": "Media"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    # Generar 5 responses: 4 con intensidad moderada 0.6 (no disparan), 1 final alta 0.9 -> debe disparar intensity_high y quizá avg si promedio >=0.7
+    # Crear únicamente una respuesta de alta intensidad
+    rr_high = client.post(f"/api/children/{cid}/responses", json={"text": "alto", "force_intensity": 0.92}, headers=headers)
+    assert rr_high.status_code == 202
+    # List alerts
+    items = []
+    for _ in range(10):  # poll hasta 2s
+        lst = client.get(f"/api/alerts?child_id={cid}", headers=headers)
+        assert lst.status_code == 200
+        items = lst.json()["items"]
+        if any(a["type"] == "intensity_high" for a in items):
+            break
+        time.sleep(0.2)
+    types = {a["type"] for a in items}
+    assert "intensity_high" in types, f"Alertas presentes: {types}"
+    # avg_intensity_high puede existir (dependiendo de intensidades mock); aceptamos opcional
+    # Si existe debe tener severity warning
+    for a in items:
+        if a["type"] == "avg_intensity_high":
+            assert a["severity"] == "warning"
+
+
+def test_auto_alert_avg_intensity_high():
+    token = register_parent("avgparent@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Crear child
+    r_child = client.post("/api/children", json={"name": "Media2"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    intensities = [0.72, 0.74, 0.76, 0.78, 0.82]
+    for idx, val in enumerate(intensities):
+        r = client.post(
+            f"/api/children/{cid}/responses", json={"text": f"resp {idx}", "force_intensity": val}, headers=headers
+        )
+        assert r.status_code == 202
+    # Tras 5 respuestas forzadas (sin respuesta extra) debería existir avg_intensity_high e intensity_high.
+    types = set()
+    sev_map = {}
+    for _ in range(10):  # hasta ~2s polling
+        alerts = client.get(f"/api/alerts?child_id={cid}", headers=headers)
+        assert alerts.status_code == 200
+        items = alerts.json()["items"]
+        types = {a["type"] for a in items}
+        sev_map = {a["type"]: a["severity"] for a in items}
+        if "avg_intensity_high" in types:
+            break
+        time.sleep(0.2)
+    assert "intensity_high" in types, f"faltan intensity_high: {types}"
+    assert "avg_intensity_high" in types, f"faltan avg_intensity_high: {types}"
+    assert sev_map.get("intensity_high") == "critical"
+    assert sev_map.get("avg_intensity_high") == "warning"
+
+
+def test_websocket_basic_flow():
+    # Si Redis no está disponible el servidor envía un warning y hace eco.
+    with client.websocket_connect("/ws") as ws:
+        first = ws.receive_json()
+        assert "type" in first
+        # Enviar ping
+        ws.send_text("ping")
+        echo = ws.receive_text()
+        assert "echo:" in echo
+    # Crear child y una respuesta de alta intensidad (no validamos mensajes si no hay Redis)
+    token = register_parent("wsparent@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    r_child = client.post("/api/children", json={"name": "WSChild"}, headers=headers)
+    assert r_child.status_code == 201
+    cid = r_child.json()["id"]
+    r_resp = client.post(
+        f"/api/children/{cid}/responses", json={"text": "ws", "force_intensity": 0.91}, headers=headers
+    )
+    assert r_resp.status_code == 202

@@ -17,6 +17,8 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 from .settings import settings
+import redis
+import json
 from .db import session_scope
 from sqlalchemy.orm import Session
 from .models import User, UserRole
@@ -67,6 +69,35 @@ def decode_token(token: str) -> Optional[dict]:
         return jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except Exception:
         return None
+
+
+# --- Refresh token revocation ---
+_revoked_refresh_tokens_memory: set[str] = set()
+try:  # optional Redis for distributed revocation
+    _redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+except Exception:  # pragma: no cover - Redis no disponible
+    _redis_client = None
+
+
+def revoke_refresh_token(token: str) -> None:
+    _revoked_refresh_tokens_memory.add(token)
+    if _redis_client is not None:
+        try:
+            _redis_client.setex(f"revoked:refresh:{hash(token)}", settings.refresh_token_expire_days * 86400, "1")
+        except Exception:
+            pass
+
+
+def is_refresh_token_revoked(token: str) -> bool:
+    if token in _revoked_refresh_tokens_memory:
+        return True
+    if _redis_client is not None:
+        try:
+            val = _redis_client.get(f"revoked:refresh:{hash(token)}")
+            return val == "1"
+        except Exception:
+            return False
+    return False
 
 
 # --- Acceso a datos de usuario ---

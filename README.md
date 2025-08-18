@@ -1,5 +1,7 @@
 # EmoTrack Kids (skeleton)
 
+![CI](../../actions/workflows/ci.yml/badge.svg) ![Coverage](https://codecov.io/gh/your-org/emotrack/branch/main/graph/badge.svg)
+
 Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders for a Flutter Web frontend.
 
 ## Quick start (Docker Compose)
@@ -93,7 +95,40 @@ pwsh scripts/tasks.ps1 openapi
 - Aislamiento por test: fixture que limpia tablas principales (`user`, `child`, `response`).
 - Ejecutar: `pytest -q`.
 - `celery_app` en tests habilita `task_store_eager_result` para poder consultar estado sin warnings.
-- CI genera reporte de cobertura (coverage.xml) como artifact.
+- CI genera reporte de cobertura (coverage.xml) como artifact y lo sube a Codecov (añade `CODECOV_TOKEN` en secrets para habilitar el badge).
+- Migraciones recientes: `0007_response_indexes_and_tz` añade índices (`emotion`, `created_at`, `(child_id, created_at)`) y asegura TZ en Postgres.
+
+## Métricas
+- Counter Prometheus: `emotrack_requests_total{method,endpoint,http_status}`
+- Histogram Prometheus: `emotrack_request_latency_seconds{method,endpoint}` (latencia en segundos)
+ - Counter Errores: `emotrack_request_errors_total{method,endpoint,exception}`
+ - Counter Tareas: `emotrack_tasks_total{task_name,status}` (status: success|error)
+Visibles en `/metrics`.
+
+### Alertas
+- Campos: `rule_version` añadido (migración 0008) para versionar reglas automáticas / deduplicación.
+- Motor de reglas v2 implementado (archivo `alert_rules.py`):
+   - `intensity_high`: intensidad >= 0.8 (critical)
+   - `emotion_streak`: 3 emociones consecutivas iguales no neutrales (warning)
+   - `avg_intensity_high`: promedio de intensidad últimas 5 >= 0.7 (warning)
+   - Ventana de deduplicación: 10 minutos por (child_id, type, rule_version).
+   - Publicación de nuevas alertas por Redis Pub/Sub en canal `emotrack:updates` como evento `alert_created`.
+
+   ### Rate limiting & PII
+   - Middleware de rate limiting in-memory (configurable por env: RATE_LIMIT_REQUESTS_PER_MINUTE / RATE_LIMIT_BURST via settings).
+   - Redacción de PII básica (emails y teléfonos) en logs si `pii_redaction_enabled`.
+   - Para producción se recomienda sustituir por Redis token bucket y regex más robustos.
+
+## Pre-commit
+Instalar hooks (ruff, black, prettier):
+```
+pip install pre-commit
+pre-commit install
+```
+Ejecutar manualmente sobre todo el repo:
+```
+pre-commit run --all-files
+```
 
 ## Frontend Web (Flutter) y servicio desde el backend
 

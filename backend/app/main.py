@@ -1,7 +1,10 @@
 import asyncio
+from datetime import datetime, timezone
 import json
+import re
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Dict, Deque
+from collections import defaultdict, deque
 
 import redis
 import structlog
@@ -28,6 +31,8 @@ from .auth import (
     create_user,
     get_user_by_email,
     create_refresh_token,
+    revoke_refresh_token,
+    is_refresh_token_revoked,
 )
 from .schemas import (
     RegisterRequest,
@@ -42,11 +47,36 @@ from .schemas import (
     AlertOut,
     AlertsList,
 )
-from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from .metrics import REQUEST_COUNT, REQUEST_LATENCY, REQUEST_ERRORS, RATE_LIMIT_HITS
 from fastapi import Response as FastAPIResponse
 from .models import Alert
+from .alert_rules import RULE_VERSION_V2
+from .alert_rules import evaluate_auto_alerts
 
 logger = structlog.get_logger()
+
+# ------- Simple in-memory rate limiting (best-effort; replace with Redis token bucket in prod) -------
+_RATE_WINDOW_SECONDS = 60
+_request_log: Dict[str, Deque[float]] = defaultdict(lambda: deque())  # fallback en memoria
+
+def _rate_limit_key(request) -> str:
+    # Per-user if auth header present, else per-IP (remote address may be None in test)
+    auth = request.headers.get("authorization") or ""
+    if auth:
+        return f"auth:{auth[:40]}"  # truncate token
+    client = request.client.host if request.client else "anon"
+    return f"ip:{client}"
+
+PII_EMAIL_RE = re.compile(r"[A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+")
+PII_PHONE_RE = re.compile(r"\b\+?\d[\d\s\-]{6,}\b")
+
+def redact_pii(value: str) -> str:
+    if not settings.pii_redaction_enabled:
+        return value
+    redacted = PII_EMAIL_RE.sub("<email_redacted>", value)
+    redacted = PII_PHONE_RE.sub("<phone_redacted>", redacted)
+    return redacted
 
 
 @asynccontextmanager
@@ -60,16 +90,69 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EmoTrack Kids API", version="0.1.0", lifespan=lifespan)
 
-# Métricas Prometheus
-REQUEST_COUNT = Counter(
-    "emotrack_requests_total", "Total de requests HTTP", ["method", "endpoint", "http_status"]
-)
-
 @app.middleware("http")
 async def metrics_middleware(request, call_next):
-    response = await call_next(request)
+    start = asyncio.get_event_loop().time()
+    path = request.url.path
+    # Rate limiting (simple sliding window count)
+    limit = settings.rate_limit_requests_per_minute
+    if limit > 0:
+        key = _rate_limit_key(request)
+        over_limit = False
+        # Intentar Redis token (contador por ventana deslizante simple)
+        if redis_client is not None:
+            try:
+                # Usar ventana de 60s basada en timestamp // 60
+                window_id = int(start // _RATE_WINDOW_SECONDS)
+                rkey = f"rl:{key}:{window_id}"
+                current_raw = redis_client.incr(rkey)
+                try:
+                    current = int(current_raw)  # type: ignore[arg-type]
+                except Exception:
+                    current = limit + settings.rate_limit_burst + 1
+                if current == 1:
+                    redis_client.expire(rkey, _RATE_WINDOW_SECONDS)
+                if current > (limit + settings.rate_limit_burst):
+                    over_limit = True
+            except Exception:
+                pass
+        if not over_limit and redis_client is None:
+            bucket = _request_log[key]
+            now = start
+            while bucket and (now - bucket[0]) > _RATE_WINDOW_SECONDS:
+                bucket.popleft()
+            if len(bucket) >= limit + settings.rate_limit_burst:
+                over_limit = True
+            else:
+                bucket.append(now)
+        if over_limit:
+            try:
+                REQUEST_ERRORS.labels(request.method, path, "RateLimitExceeded").inc()
+            except Exception:
+                pass
+            try:
+                RATE_LIMIT_HITS.labels(key, "blocked").inc()
+            except Exception:
+                pass
+            return FastAPIResponse(status_code=429, content=json.dumps({"detail": "rate_limited"}), media_type="application/json")
+        else:
+            try:
+                RATE_LIMIT_HITS.labels(key, "accepted").inc()
+            except Exception:
+                pass
     try:
-        REQUEST_COUNT.labels(request.method, request.url.path, str(response.status_code)).inc()
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001
+        # Contabilizar error y re-lanzar
+        try:
+            REQUEST_ERRORS.labels(request.method, path, exc.__class__.__name__).inc()
+        except Exception:
+            pass
+        raise
+    elapsed = asyncio.get_event_loop().time() - start
+    try:
+        REQUEST_COUNT.labels(request.method, path, str(response.status_code)).inc()
+        REQUEST_LATENCY.labels(request.method, path).observe(elapsed)
     except Exception:
         pass
     return response
@@ -131,6 +214,7 @@ class CreateChildResponsePayload(BaseModel):
     # Se acepta solo texto y emoji opcionales.
     text: Optional[str] = None
     emoji: Optional[str] = None
+    force_intensity: Optional[float] = None
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -161,6 +245,12 @@ def require_roles(*roles: UserRole):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/debug/boom")
+async def debug_boom():
+    # Endpoint intencional para probar métricas de errores
+    raise ValueError("boom test")
 
 
 @app.get("/metrics")
@@ -201,6 +291,8 @@ def refresh(token: str):
     payload = decode_token(token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="refresh_invalido")
+    if is_refresh_token_revoked(token):
+        raise HTTPException(status_code=401, detail="refresh_revocado")
     sub = payload.get("sub")
     if not isinstance(sub, str):
         raise HTTPException(status_code=401, detail="refresh_invalido")
@@ -213,6 +305,17 @@ def refresh(token: str):
         expires_minutes=settings.access_token_expire_minutes,
     )
     return {"access_token": access, "token_type": "bearer", "expires_in": settings.access_token_expire_minutes * 60}
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(refresh_token: str):
+    # Cliente envía refresh token para revocar
+    if refresh_token:
+        try:
+            revoke_refresh_token(refresh_token)
+        except Exception:
+            pass
+    return FastAPIResponse(status_code=204, content=None)
 
 
 @app.get("/api/auth/me", response_model=UserOut)
@@ -428,7 +531,27 @@ def create_alert(payload: AlertCreate, session=Depends(get_session), user=Depend
     severity = (payload.severity or "info").lower()
     if severity not in {"info", "warning", "critical"}:
         raise HTTPException(status_code=400, detail="severity_invalid")
-    alert = Alert(child_id=payload.child_id, type=payload.type, message=payload.message, severity=severity)
+    # Deduplicación básica: misma combinación en últimos 10 minutos con igual rule_version (si aplica)
+    rule_version = RULE_VERSION_V2
+    existing = session.exec(
+        select(Alert).where(
+            Alert.child_id == payload.child_id,
+            Alert.type == payload.type,
+            Alert.message == payload.message,
+            Alert.rule_version == rule_version,
+        )
+    ).first()
+    alert = Alert(child_id=payload.child_id, type=payload.type, message=payload.message, severity=severity, rule_version=rule_version)
+    if existing:
+        return {
+            "id": existing.id,
+            "child_id": existing.child_id,
+            "type": existing.type,
+            "message": existing.message,
+            "severity": existing.severity,
+            "rule_version": existing.rule_version,
+            "created_at": existing.created_at.isoformat() if getattr(existing, "created_at", None) else None,
+        }
     session.add(alert)
     session.flush()
     assert alert.id is not None
@@ -438,6 +561,7 @@ def create_alert(payload: AlertCreate, session=Depends(get_session), user=Depend
         "type": alert.type,
         "message": alert.message,
         "severity": alert.severity,
+        "rule_version": alert.rule_version,
         "created_at": alert.created_at.isoformat() if getattr(alert, "created_at", None) else None,
     }
 
@@ -455,6 +579,7 @@ def list_alerts(child_id: Optional[int] = None, session=Depends(get_session), us
             "type": a.type,
             "message": a.message,
             "severity": a.severity,
+            "rule_version": a.rule_version,
             "created_at": a.created_at.isoformat() if getattr(a, "created_at", None) else None,
         }
         for a in rows
@@ -504,7 +629,35 @@ def create_response_for_child(child_id: int, payload: CreateChildResponsePayload
     row = Response(child_name=c.name, child_id=child_id, emotion="Unknown", status=ResponseStatus.QUEUED)
     session.add(row)
     session.flush()
-    task_id = enqueue_analysis_task({"text": text or "", "child_id": child_id, "emoji": emoji, "response_id": row.id})
+    task_payload = {"text": text or "", "child_id": child_id, "emoji": emoji, "response_id": row.id}
+    if payload and payload.force_intensity is not None:
+        fi = payload.force_intensity
+        task_payload["force_intensity"] = fi
+        # Pre-popular análisis simulado para permitir reglas (incluye current en media)
+        analysis_stub = {
+            "primary_emotion": "Mixto",
+            "intensity": fi,
+            "polarity": "Neutro",
+            "keywords": [],
+            "tone_features": None,
+            "audio_features": None,
+            "transcript": text or "",
+            "confidence": 0.5,
+            "model_version": "mock-sync-0.1",
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        # Marcar response como completado con stub para que rule engine considere este registro
+        row.emotion = analysis_stub["primary_emotion"]
+        row.status = ResponseStatus.COMPLETED
+        row.analysis_json = analysis_stub
+        session.add(row)
+        session.flush()
+        # Ejecutar reglas v2 (puede crear intensity_high, streak, avg) evitando duplicados temporales
+        try:
+            evaluate_auto_alerts(session, child_id, row, analysis_stub)
+        except Exception:
+            pass
+    task_id = enqueue_analysis_task(task_payload)
     _safe_publish(WS_CHANNEL, {"type": "task_queued", "task_id": task_id, "response_id": row.id, "status": "QUEUED"})
     return {"status": "accepted", "task_id": task_id, "response_id": row.id}
 
@@ -524,9 +677,21 @@ async def websocket_endpoint(ws: WebSocket):
         except WebSocketDisconnect:
             logger.info("websocket_disconnected")
         return
-
-    pubsub = redis_client.pubsub()
-    pubsub.subscribe(WS_CHANNEL)
+    try:
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe(WS_CHANNEL)
+    except Exception:
+        await ws.send_json({"type": "warning", "message": "realtime fallback (redis error)"})
+        try:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.receive_text(), timeout=0.5)
+                    await ws.send_text(f"echo: {msg}")
+                except asyncio.TimeoutError:
+                    pass
+        except WebSocketDisconnect:
+            logger.info("websocket_disconnected")
+        return
     try:
         await ws.send_json({"type": "welcome", "message": "connected"})
         while True:

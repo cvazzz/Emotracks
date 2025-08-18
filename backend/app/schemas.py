@@ -67,6 +67,7 @@ class AlertOut(BaseModel):
     type: str
     message: str
     severity: str
+    rule_version: Optional[str] = None
     created_at: Optional[str | None | object] = None  # aceptar raw; FastAPI serializa
 
     model_config = ConfigDict(from_attributes=True)
