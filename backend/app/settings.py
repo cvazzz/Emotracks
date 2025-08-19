@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     alert_avg_intensity_count: int = 5
     alert_avg_intensity_threshold: float = 0.7
     alert_emotion_streak_length: int = 3
+    # Dynamic override flag
+    dynamic_config_enabled: bool = True
+    # External AI provider (Grok) config
+    grok_api_key: str | None = os.getenv("GROK_API_KEY")
+    grok_model: str = os.getenv("GROK_MODEL", "emotion-base-1")
+    grok_timeout_seconds: float = float(os.getenv("GROK_TIMEOUT_SECONDS", "8"))
+    grok_enabled: bool = os.getenv("GROK_ENABLED", "1") in {"1", "true", "True"}
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

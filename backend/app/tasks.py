@@ -7,6 +7,7 @@ from celery.result import AsyncResult
 from .celery_app import celery_app
 from .db import session_scope
 from .models import Response, ResponseStatus
+from .grok_client import analyze_text as grok_analyze
 from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
@@ -23,18 +24,37 @@ def analyze_text_task(payload: dict) -> dict:
     forced = payload.get("force_intensity")
     auto_intensity = 0.9 if "ALTO" in text.upper() else 0.2
     intensity_value = forced if isinstance(forced, (int, float)) else auto_intensity
-    result = {
-        "primary_emotion": "Neutral" if not text else "Mixto",
-        "intensity": intensity_value,
-        "polarity": "Neutro",
-        "keywords": [],
-        "tone_features": None,
-        "audio_features": None,
-        "transcript": text,
-        "confidence": 0.5,
-        "model_version": "mock-worker-0.1",
-        "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    # Si Grok habilitado delegar (manteniendo compatibilidad con force_intensity para tests)
+    if forced is not None:  # forzamos stub para pruebas deterministas
+        result = {
+            "primary_emotion": "Neutral" if not text else "Mixto",
+            "intensity": intensity_value,
+            "polarity": "Neutro",
+            "keywords": [],
+            "tone_features": None,
+            "audio_features": None,
+            "transcript": text,
+            "confidence": 0.5,
+            "model_version": "mock-worker-0.1",
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        try:
+            result = grok_analyze(text)
+        except Exception:
+            # Fallback a mock simple (no fuerza intensidades altas salvo palabra ALTO)
+            result = {
+                "primary_emotion": "Neutral" if not text else "Mixto",
+                "intensity": intensity_value,
+                "polarity": "Neutro",
+                "keywords": [],
+                "tone_features": None,
+                "audio_features": None,
+                "transcript": text,
+                "confidence": 0.5,
+                "model_version": "mock-worker-fallback-exc",
+                "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     task_name = "analyze.text"
     status_label = "success"
     if response_id:

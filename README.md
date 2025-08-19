@@ -1,66 +1,65 @@
 # EmoTrack Kids (skeleton)
 
-![CI](../../actions/workflows/ci.yml/badge.svg) ![Coverage](https://codecov.io/gh/your-org/emotrack/branch/main/graph/badge.svg)
-
-Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders for a Flutter Web frontend.
-
-## Quick start (Docker Compose)
-
-1. Copy env file
-   - Windows PowerShell:
-     - Copy-Item .env.example .env
-2. Start services
-   - docker compose up --build
-3. Visit API docs
-   - http://localhost:8000/docs
-4. Frontend (opcional):
-   - Construye Flutter Web y sirve estáticos desde FastAPI (ver sección Frontend Web)
-
 ## Endpoints (MVP actual)
-- GET /health
-- Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, POST /api/auth/logout (revoca refresh), GET /api/auth/me
+ - GET /health
+ - Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, POST /api/auth/logout (revoca refresh), GET /api/auth/me
+ - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
+ - Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
+ - Crear response directo para child: POST /api/children/{id}/responses
+ - POST /api/analyze-emotion (sync mock)
+ - POST /api/submit-responses → 202 { task_id }
+ - GET /api/response-status/{task_id}
+ - WS /ws (realtime + fallback eco sin Redis)
+ - GET /api/responses (latest)
+ - GET /api/responses/{id} (detail with analysis_json)
+ - GET /api/dashboard/{child_ref}
+ - Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id}
+4. Frontend (opcional):
+## Métricas
+ - Counter Prometheus: `emotrack_requests_total{method,endpoint,http_status}`
+ - Histogram Prometheus: `emotrack_request_latency_seconds{method,endpoint}` (latencia en segundos)
+ - Counter Errores: `emotrack_request_errors_total{method,endpoint,exception}`
+ - Counter Tareas: `emotrack_tasks_total{task_name,status}` (status: success|error)
+ - Rate limit: `emotrack_rate_limit_hits_total{key,action}` (accepted|blocked)
+ - Alertas (Gauge acumulativo): `emotrack_alerts_total{type,severity}`
 - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
-- Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
-- Crear response directo para child: POST /api/children/{id}/responses
-- POST /api/analyze-emotion (sync mock)
-- POST /api/submit-responses → 202 { task_id }
-- GET /api/response-status/{task_id}
-- WS /ws (realtime + fallback eco sin Redis)
-- GET /api/responses (latest)
+### Alertas
+ - `rule_version` para versionado (v2)
+ - Reglas (thresholds configurables por env y opcionalmente en runtime si `DYNAMIC_CONFIG_ENABLED=1`):
+    - `intensity_high`: intensidad >= ALERT_INTENSITY_HIGH_THRESHOLD (default 0.8) → critical
+    - `emotion_streak`: ALERT_EMOTION_STREAK_LENGTH consecutivas iguales (default 3) → warning
+    - `avg_intensity_high`: promedio últimas ALERT_AVG_INTENSITY_COUNT >= ALERT_AVG_INTENSITY_THRESHOLD (defaults 5 / 0.7) → warning
+ - Dedup 10 minutos
+ - Publicación `alert_created` via Redis canal `emotrack:updates`
+ - Métrica Gauge: `emotrack_alerts_total{type,severity}`
+
+#### Overrides en runtime (thresholds)
+Requiere rol `admin` y `DYNAMIC_CONFIG_ENABLED=1`.
+Endpoints:
+ - GET `/api/config/alert-thresholds` (valores efectivos merge env + overrides)
+ - PUT `/api/config/alert-thresholds` body ejemplo:
+ ```json
+ { "intensity_high": 0.85, "emotion_streak_length": 4, "avg_count": 6, "avg_threshold": 0.72 }
+ ```
+Se persisten en tabla `appconfig` (`alert_*`).
 - GET /api/responses/{id} (detail with analysis_json)
-- GET /api/dashboard/{child_ref}
-- Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id}
+### Tokens / Logout
+ - Refresh revocable: POST /api/auth/logout (query param: `refresh_token`)
+ - Revocación persistente: tabla `revokedtoken` almacena hash SHA-256 (permanece tras reinicio)
+ - Redis (si disponible) para lookup rápido (`revoked:refresh:<hash>`)
+ - /api/auth/refresh => 401 `refresh_revocado` si token revocado
 - Métricas Prometheus: GET /metrics
-
+## Notes
+ - Realtime: WebSocket + Redis Pub/Sub (to be wired in)
+ - Config dinámico: `DYNAMIC_CONFIG_ENABLED=1` permite overrides vía API admin
 ### Realtime / WebSocket
-- Conexión: `GET ws://localhost:8000/ws`
-- Mensajes:
-  - `{"type": "welcome"}` al conectar
-  - `{"type": "task_queued", ...}` al encolar
-  - `{"type": "task_completed", ...}` al finalizar (mock)
-  - `{"type": "alert_created", "alert": { ... }}` si Redis disponible
 - Sin Redis: mensaje `warning` y modo echo
-
 ### Export OpenAPI
 Para exportar el JSON del esquema OpenAPI a `openapi.json`:
 
 ```bash
-python - <<'PY'
-from backend.app.main import app
-import json, pathlib
-pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2))
-print('openapi.json generado')
-PY
 ```
-
-### Tareas rápidas
-Makefile (Linux/Mac):
-```
-make install
 make test
-make openapi
-make coverage
-```
 
 PowerShell (Windows) con `scripts\tasks.ps1`:
 ```
