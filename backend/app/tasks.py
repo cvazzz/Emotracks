@@ -12,6 +12,7 @@ from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
 from .settings import settings
+from .audio_utils import normalizar_audio, extraer_features_audio
 import os
 import wave
 import contextlib
@@ -42,6 +43,14 @@ def analyze_text_task(payload: dict) -> dict:
     text = payload.get("text", "")
     audio_path = payload.get("audio_path")
     audio_duration = _extract_duration_seconds(audio_path) if audio_path else None
+    audio_features_extra = {}
+    if audio_path and settings.enable_audio_features:
+        try:
+            norm_path = normalizar_audio(audio_path)
+            feats = extraer_features_audio(norm_path)
+            audio_features_extra.update(feats)
+        except Exception:
+            pass
     response_id = payload.get("response_id")
     payload_child_id = payload.get("child_id")
     # Allow forcing intensity (test support) else mock default 0.2 / 0.9 for high text tokens
@@ -82,10 +91,11 @@ def analyze_text_task(payload: dict) -> dict:
     # Placeholder: si audio_path y no transcript, mantener campo para futura transcripción
     if audio_path and not result.get("transcript"):
         result["transcript"] = "<audio_pending_transcription>"
-    if audio_duration is not None:
-        # Adjuntar duración a audio_features provisional
+    if audio_duration is not None or audio_features_extra:
         af = result.get("audio_features") or {}
-        af["duration_sec"] = audio_duration
+        if audio_duration is not None:
+            af["duration_sec"] = audio_duration
+        af.update(audio_features_extra)
         result["audio_features"] = af
     task_name = "analyze.text"
     status_label = "success"
