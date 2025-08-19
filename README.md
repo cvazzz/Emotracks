@@ -18,27 +18,28 @@ Local-first scaffold for FastAPI + Celery + Redis + Postgres, with placeholders 
 
 ## Endpoints (MVP actual)
 - GET /health
-- Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, GET /api/auth/me
+- Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, POST /api/auth/logout (revoca refresh), GET /api/auth/me
 - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
 - Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
 - Crear response directo para child: POST /api/children/{id}/responses
 - POST /api/analyze-emotion (sync mock)
 - POST /api/submit-responses → 202 { task_id }
 - GET /api/response-status/{task_id}
-- WS /ws (stub; future Redis Pub/Sub bridge)
+- WS /ws (realtime + fallback eco sin Redis)
 - GET /api/responses (latest)
 - GET /api/responses/{id} (detail with analysis_json)
-- GET /api/dashboard/{child_ref} (child_ref = id numérico o nombre legacy; incluye objeto child si existe)
-- Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id} (migración 0006; severities: info|warning|critical)
+- GET /api/dashboard/{child_ref}
+- Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id}
 - Métricas Prometheus: GET /metrics
 
 ### Realtime / WebSocket
 - Conexión: `GET ws://localhost:8000/ws`
-- Mensajes del servidor (JSON):
-   - `{"type": "welcome"}` al conectar.
-   - `{"type": "task_queued", "task_id": ..., "response_id": ..., "status": "QUEUED"}` cuando se encola una tarea.
-   - `{"type": "task_completed", "response_id": ..., "status": "COMPLETED", "emotion": "..."}` cuando finaliza el análisis (mock actual).
-- Si Redis no está disponible se envía `warning` y el socket funciona en modo eco.
+- Mensajes:
+  - `{"type": "welcome"}` al conectar
+  - `{"type": "task_queued", ...}` al encolar
+  - `{"type": "task_completed", ...}` al finalizar (mock)
+  - `{"type": "alert_created", "alert": { ... }}` si Redis disponible
+- Sin Redis: mensaje `warning` y modo echo
 
 ### Export OpenAPI
 Para exportar el JSON del esquema OpenAPI a `openapi.json`:
@@ -46,15 +47,13 @@ Para exportar el JSON del esquema OpenAPI a `openapi.json`:
 ```bash
 python - <<'PY'
 from backend.app.main import app
-import json
-import pathlib
+import json, pathlib
 pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2))
 print('openapi.json generado')
 PY
 ```
 
-### Tareas rápidas (Makefile / PowerShell)
-
+### Tareas rápidas
 Makefile (Linux/Mac):
 ```
 make install
@@ -103,61 +102,39 @@ pwsh scripts/tasks.ps1 openapi
 - Histogram Prometheus: `emotrack_request_latency_seconds{method,endpoint}` (latencia en segundos)
  - Counter Errores: `emotrack_request_errors_total{method,endpoint,exception}`
  - Counter Tareas: `emotrack_tasks_total{task_name,status}` (status: success|error)
-Visibles en `/metrics`.
+ - Rate limit: `emotrack_rate_limit_hits_total{key,action}` (accepted|blocked)
 
 ### Alertas
-- Campos: `rule_version` añadido (migración 0008) para versionar reglas automáticas / deduplicación.
-- Motor de reglas v2 implementado (archivo `alert_rules.py`):
-   - `intensity_high`: intensidad >= 0.8 (critical)
-   - `emotion_streak`: 3 emociones consecutivas iguales no neutrales (warning)
-   - `avg_intensity_high`: promedio de intensidad últimas 5 >= 0.7 (warning)
-   - Ventana de deduplicación: 10 minutos por (child_id, type, rule_version).
-   - Publicación de nuevas alertas por Redis Pub/Sub en canal `emotrack:updates` como evento `alert_created`.
+- `rule_version` para versionado (v2)
+- Reglas (thresholds configurables por env):
+  - `intensity_high`: intensidad >= ALERT_INTENSITY_HIGH_THRESHOLD (default 0.8) → critical
+  - `emotion_streak`: ALERT_EMOTION_STREAK_LENGTH consecutivas iguales (default 3) → warning
+  - `avg_intensity_high`: promedio últimas ALERT_AVG_INTENSITY_COUNT >= ALERT_AVG_INTENSITY_THRESHOLD (defaults 5 / 0.7) → warning
+- Dedup 10 minutos
+- Publicación `alert_created` via Redis canal `emotrack:updates`
 
-   ### Rate limiting & PII
-   - Middleware de rate limiting in-memory (configurable por env: RATE_LIMIT_REQUESTS_PER_MINUTE / RATE_LIMIT_BURST via settings).
-   - Redacción de PII básica (emails y teléfonos) en logs si `pii_redaction_enabled`.
-   - Para producción se recomienda sustituir por Redis token bucket y regex más robustos.
+### Rate limiting & PII
+- Middleware híbrido (Redis + memoria)
+- Env: RATE_LIMIT_REQUESTS_PER_MINUTE, RATE_LIMIT_BURST
+- PII redaction (emails, teléfonos) si `PII_REDACTION_ENABLED=1`
+
+### Tokens / Logout
+- Refresh revocable: POST /api/auth/logout (body: refresh_token)
+- /api/auth/refresh devuelve 401 `refresh_revocado` si token revocado
 
 ## Pre-commit
 Instalar hooks (ruff, black, prettier):
 ```
 pip install pre-commit
 pre-commit install
-```
-Ejecutar manualmente sobre todo el repo:
-```
 pre-commit run --all-files
 ```
 
-## Frontend Web (Flutter) y servicio desde el backend
+## Frontend Flutter (build & serve)
+1. `flutter build web --release`
+2. Copiar build a `backend/static/`
+3. Levantar backend (sirve index.html)
 
-Opción A: Servir con el backend (recomendado para demo)
-
-1) Construir Flutter Web
-
-   Windows PowerShell:
-   - scripts\build_frontend.ps1
-
-   Esto ejecuta `flutter build web --release` y copia la salida a `backend/static/`.
-
-2) Levantar servicios
-
-   - docker compose up --build
-
-3) Acceder
-
-   - Navega a http://localhost:8000/ para la web (sirve index.html) y http://localhost:8000/docs para la API.
-
-Notas:
-- El backend monta estáticos automáticamente si existe `backend/static` (o si apuntas STATIC_DIR a otra ruta). Busca también `frontend/build/web` como fallback en modo desarrollo.
-- Variable opcional: STATIC_DIR para indicar una carpeta específica.
-
-Opción B: Servir Flutter por separado (desarrollo)
-
-1) Ejecuta el dev server de Flutter Web en el folder `frontend/`:
-   - flutter run -d chrome
-
-2) Apunta la app a la API en http://localhost:8000 (API_BASE si compilas con define)
+O usar dev server (flutter run -d chrome) apuntando a API http://localhost:8000
 
 

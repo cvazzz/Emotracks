@@ -335,3 +335,21 @@ def test_websocket_basic_flow():
         f"/api/children/{cid}/responses", json={"text": "ws", "force_intensity": 0.91}, headers=headers
     )
     assert r_resp.status_code == 202
+
+
+def test_refresh_revocation_flow():
+    token = register_parent("revoc@example.com")
+    # Login again to get refresh (register helper already did login, so perform explicit login to capture refresh)
+    login = client.post("/api/auth/login", json={"email": "revoc@example.com", "password": "pass123"})
+    assert login.status_code == 200
+    refresh = login.json()["refresh_token"]
+    # Use refresh successfully
+    r1 = client.post("/api/auth/refresh", params={"token": refresh})
+    assert r1.status_code == 200
+    # Logout (revoke)
+    rlogout = client.post("/api/auth/logout", params={"refresh_token": refresh})
+    assert rlogout.status_code == 204
+    # Try refresh again -> 401
+    r2 = client.post("/api/auth/refresh", params={"token": refresh})
+    assert r2.status_code == 401
+    assert r2.json().get("detail") == "refresh_revocado"
