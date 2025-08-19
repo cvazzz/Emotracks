@@ -82,6 +82,26 @@ def _ensure_sqlite_columns() -> None:
         if "child_id" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE response ADD COLUMN child_id INTEGER"))
+        # Audio pipeline new columns (added via migration 0010 in real DBs). For tests/dev on SQLite we patch in-place.
+        audio_columns = [
+            ("audio_path", "TEXT"),
+            ("audio_format", "TEXT"),
+            ("audio_duration_sec", "REAL"),
+            ("transcript", "TEXT"),
+        ]
+        for col_name, col_type in audio_columns:
+            if col_name not in cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE response ADD COLUMN {col_name} {col_type}"))
+                except Exception:
+                    pass
+        # Best-effort index for audio_path
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_response_audio_path ON response(audio_path)"))
+        except Exception:
+            pass
         # Create child table if not exists (simple check)
         if "child" not in insp.get_table_names():
             with engine.begin() as conn:

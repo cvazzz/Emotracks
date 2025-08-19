@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import ssl
 
 from .settings import settings
+from .metrics import GROK_REQUEST_LATENCY, GROK_REQUESTS, GROK_FALLBACKS
 
 
 class GrokClientError(Exception):
@@ -60,7 +61,13 @@ def _mock_analysis(text: str) -> dict:
 
 def analyze_text(text: str) -> dict:
     if not settings.grok_enabled or not settings.grok_api_key:
-        return _mock_analysis(text)
+        fb = _mock_analysis(text)
+        try:
+            GROK_REQUESTS.labels("disabled").inc()
+            GROK_FALLBACKS.labels("disabled").inc()
+        except Exception:
+            pass
+        return fb
     url = "https://api.x.ai/v1/analysis"  # Placeholder
     headers = {
         "Authorization": f"Bearer {settings.grok_api_key}",
@@ -75,6 +82,7 @@ def analyze_text(text: str) -> dict:
     retries = 3
     backoff = 0.6
     last_error: str | None = None
+    start_time = time.time()
     for attempt in range(retries):
         try:
             status, j, raw = _do_http_json(url, "POST", headers, payload, settings.grok_timeout_seconds)
@@ -82,7 +90,7 @@ def analyze_text(text: str) -> dict:
                 em_data = j.get("emotion", {}) if isinstance(j, dict) else {}
                 primary = em_data.get("primary") or em_data.get("label") or "Neutral"
                 intensity = float(em_data.get("intensity", 0.2))
-                return {
+                result = {
                     "primary_emotion": primary,
                     "intensity": intensity,
                     "polarity": em_data.get("polarity", "Neutro"),
@@ -94,6 +102,12 @@ def analyze_text(text: str) -> dict:
                     "model_version": f"grok:{settings.grok_model}",
                     "analysis_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
+                try:
+                    GROK_REQUESTS.labels("ok").inc()
+                    GROK_REQUEST_LATENCY.labels("ok").observe(time.time() - start_time)
+                except Exception:
+                    pass
+                return result
             if status in (401, 403):
                 last_error = f"auth_error_{status}"
                 break
@@ -109,6 +123,12 @@ def analyze_text(text: str) -> dict:
         backoff *= 1.8
     fb = _mock_analysis(text)
     fb["model_version"] += f";fallback_reason={last_error}"
+    try:
+        GROK_REQUESTS.labels("fallback").inc()
+        GROK_FALLBACKS.labels(last_error or "unknown").inc()
+        GROK_REQUEST_LATENCY.labels("fallback").observe(time.time() - start_time)
+    except Exception:
+        pass
     return fb
 
 

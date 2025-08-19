@@ -22,6 +22,10 @@
  - Counter Tareas: `emotrack_tasks_total{task_name,status}` (status: success|error)
  - Rate limit: `emotrack_rate_limit_hits_total{key,action}` (accepted|blocked)
  - Alertas (Gauge acumulativo): `emotrack_alerts_total{type,severity}`
+ - Grok AI:
+   - `emotrack_grok_requests_total{outcome}` (outcome: ok|fallback|disabled)
+   - `emotrack_grok_request_latency_seconds{outcome}`
+   - `emotrack_grok_fallbacks_total{reason}` (reason = causa agregada de fallback)
 - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
 ### Alertas
  - `rule_version` para versionado (v2)
@@ -68,6 +72,17 @@ pwsh scripts/tasks.ps1 test
 pwsh scripts/tasks.ps1 openapi
 ```
 
+## Audio / Transcripción (fase inicial)
+- Endpoint `/api/submit-responses` acepta `audio_file` (multipart) además de texto / emoji.
+- Archivo se persiste en `uploads/` con nombre único.
+- Columnas nuevas en `response`:
+  - `audio_path`, `audio_format`, `audio_duration_sec`, `transcript`.
+- Actualmente: duración se intenta extraer solo para WAV (simple `wave`); otros formatos quedan con `audio_duration_sec = null`.
+- Transcripción pendiente (placeholder `<audio_pending_transcription>` si no hay texto).
+- Flags/vars:
+  - `ENABLE_TRANSCRIPTION` (futuro, hoy sin efecto real) 
+  - `MAX_AUDIO_DURATION_SEC` (límite preventivo futuro)
+
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings
 - worker: (uses same image; tasks live under backend/app)
@@ -96,12 +111,13 @@ pwsh scripts/tasks.ps1 openapi
 - CI genera reporte de cobertura (coverage.xml) como artifact y lo sube a Codecov (añade `CODECOV_TOKEN` en secrets para habilitar el badge).
 - Migraciones recientes: `0007_response_indexes_and_tz` añade índices (`emotion`, `created_at`, `(child_id, created_at)`) y asegura TZ en Postgres.
 
-## Métricas
+## Métricas (resumen actualizado)
 - Counter Prometheus: `emotrack_requests_total{method,endpoint,http_status}`
 - Histogram Prometheus: `emotrack_request_latency_seconds{method,endpoint}` (latencia en segundos)
  - Counter Errores: `emotrack_request_errors_total{method,endpoint,exception}`
  - Counter Tareas: `emotrack_tasks_total{task_name,status}` (status: success|error)
- - Rate limit: `emotrack_rate_limit_hits_total{key,action}` (accepted|blocked)
+- Rate limit: `emotrack_rate_limit_hits_total{key,action}` (accepted|blocked)
+- Grok: `emotrack_grok_requests_total`, `emotrack_grok_request_latency_seconds`, `emotrack_grok_fallbacks_total`
 
 ### Alertas
 - `rule_version` para versionado (v2)
@@ -135,5 +151,27 @@ pre-commit run --all-files
 3. Levantar backend (sirve index.html)
 
 O usar dev server (flutter run -d chrome) apuntando a API http://localhost:8000
+
+## Variables de entorno clave (parcial)
+```
+REDIS_URL=redis://redis:6379/0
+DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/emotrack
+GROK_ENABLED=1
+GROK_API_KEY=sk_...
+GROK_MODEL=emotion-base-1
+GROK_TIMEOUT_SECONDS=8
+ENABLE_TRANSCRIPTION=0
+MAX_AUDIO_DURATION_SEC=600
+DYNAMIC_CONFIG_ENABLED=1
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_BURST=20
+```
+
+## Roadmap corto
+- [ ] Implementar transcripción (Whisper local o API) con caché y tiempo máximo.
+- [ ] Normalizar formatos (ffmpeg) a 16k mono WAV antes de análisis.
+- [ ] Extraer features de audio (pitch, energy) para `tone_features`.
+- [ ] Endpoint de polling mejorado que incluya progreso de transcripción.
+- [ ] Pruebas unitarias de flujo con audio simulado y duración.
 
 

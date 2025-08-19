@@ -12,12 +12,36 @@ from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
 from .settings import settings
+import os
+import wave
+import contextlib
+
+
+def _extract_duration_seconds(path: str) -> float | None:
+    """Extracción simple de duración para WAV; otros formatos se omiten por ahora.
+    Devuelve None si no se puede determinar."""
+    if not path or not os.path.isfile(path):
+        return None
+    # Solo WAV rápido sin dependencias externas
+    if not path.lower().endswith(".wav"):
+        return None
+    try:
+        with contextlib.closing(wave.open(path, "rb")) as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0:
+                return frames / float(rate)
+    except Exception:
+        return None
+    return None
 
 
 @celery_app.task(name="analyze.text")
 def analyze_text_task(payload: dict) -> dict:
     """Tarea simulada de análisis de texto (mock)."""
     text = payload.get("text", "")
+    audio_path = payload.get("audio_path")
+    audio_duration = _extract_duration_seconds(audio_path) if audio_path else None
     response_id = payload.get("response_id")
     payload_child_id = payload.get("child_id")
     # Allow forcing intensity (test support) else mock default 0.2 / 0.9 for high text tokens
@@ -55,6 +79,14 @@ def analyze_text_task(payload: dict) -> dict:
                 "model_version": "mock-worker-fallback-exc",
                 "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             }
+    # Placeholder: si audio_path y no transcript, mantener campo para futura transcripción
+    if audio_path and not result.get("transcript"):
+        result["transcript"] = "<audio_pending_transcription>"
+    if audio_duration is not None:
+        # Adjuntar duración a audio_features provisional
+        af = result.get("audio_features") or {}
+        af["duration_sec"] = audio_duration
+        result["audio_features"] = af
     task_name = "analyze.text"
     status_label = "success"
     if response_id:
@@ -65,6 +97,12 @@ def analyze_text_task(payload: dict) -> dict:
                     row.emotion = result["primary_emotion"]
                     row.status = ResponseStatus.COMPLETED
                     row.analysis_json = result
+                    # Guardar duración en columna si se obtuvo
+                    if audio_duration is not None:
+                        try:
+                            row.audio_duration_sec = audio_duration
+                        except Exception:
+                            pass
                     s.flush()
                     # Fallback: si la transacción original no ha committeado aún child_id (otro session), usar el del payload
                     if row.child_id is None and payload_child_id is not None:

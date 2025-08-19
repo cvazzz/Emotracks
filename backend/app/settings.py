@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     grok_model: str = os.getenv("GROK_MODEL", "emotion-base-1")
     grok_timeout_seconds: float = float(os.getenv("GROK_TIMEOUT_SECONDS", "8"))
     grok_enabled: bool = os.getenv("GROK_ENABLED", "1") in {"1", "true", "True"}
+    # Audio / transcripción
+    enable_transcription: bool = os.getenv("ENABLE_TRANSCRIPTION", "0") in {"1", "true", "True"}
+    max_audio_duration_sec: float = float(os.getenv("MAX_AUDIO_DURATION_SEC", "600"))  # límite duro para procesamiento
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
