@@ -114,6 +114,18 @@ def analyze_text_task(payload: dict) -> dict:
     audio_duration = _extract_duration_seconds(audio_path) if audio_path else None
     audio_features_extra = {}
     normalized_path = audio_path
+    # Emitir evento de inicio de análisis
+    try:
+        r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        r.publish(
+            "emotrack:updates",
+            json.dumps({
+                "type": "analysis_started",
+                "response_id": payload.get("response_id"),
+            })
+        )
+    except Exception:
+        pass
     if audio_path and settings.enable_audio_features:
         try:
             normalized_path = normalizar_audio(audio_path)

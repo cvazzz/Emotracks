@@ -107,6 +107,42 @@ Editar
   "message": "Transcription and emotion analysis queued."
 }
 Then worker updates DB when ready; clients can poll GET /api/response-status/{task_id}.
+Nuevo: /api/response-status/{task_id} devuelve también:
+{
+  "task_id": "uuid-1234",
+  "celery_status": "SUCCESS|PENDING|...",
+  "progress": 85,
+  "phase": "TRANSCRIPTION_QUEUED",
+  "response_id": 42,
+  "db_status": "COMPLETED",
+  "analysis": { ... } // presente sólo si completed
+}
+
+Endpoint listado de tareas recientes:
+GET /api/tasks/recent?child_id=123&limit=20
+Respuesta:
+{
+  "items": [
+     {"response_id": 42, "task_id": "uuid", "status": "COMPLETED", "progress": 100, "phase": "DONE", "emotion": "Mixto", "created_at": "..."}
+  ],
+  "limit": 20,
+  "offset": 0
+}
+
+Eventos WebSocket (canal emotrack:updates):
+ - task_queued {task_id, response_id}
+ - analysis_started {response_id}
+ - transcription_queued {response_id}
+ - transcription_ready {response_id}
+ - task_completed {response_id, emotion}
+ - alert_created {alert: {...}}
+
+Fases y progreso heurístico:
+ QUEUED (0)
+ ANALYSIS_RUNNING (30)
+ FEATURES_EXTRACTED (70)
+ TRANSCRIPTION_QUEUED (85)
+ DONE (100)
 
 POST /api/analyze-emotion (sync, for testing)
 Request:

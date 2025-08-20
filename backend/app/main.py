@@ -180,6 +180,52 @@ def _safe_publish(channel: str, payload: dict) -> None:
         logger.warning("redis_publish_failed", channel=channel)
 
 
+def _compute_progress(response_obj: Response | None, celery_status: str) -> tuple[int, str]:
+    """Heurística de progreso para flujo async.
+
+    Fases y pesos aproximados (sin persistir en DB):
+      QUEUED: 0
+      ANALYSIS_RUNNING: 30
+      ANALYSIS_COMPLETED (sin audio): 100
+      FEATURES_EXTRACTED (audio_features presentes): 70
+      TRANSCRIPTION_QUEUED (transcript placeholder): 85
+      DONE (transcript final): 100
+    """
+    if response_obj is None:
+        # Solo status Celery disponible
+        if celery_status in {"PENDING", "RECEIVED"}:
+            return 0, "QUEUED"
+        if celery_status in {"STARTED"}:
+            return 30, "ANALYSIS_RUNNING"
+        return 0, "UNKNOWN"
+    # If completed fully without audio
+    analysis = response_obj.analysis_json or {}
+    has_audio = bool(response_obj.audio_path)
+    audio_features = analysis.get("audio_features") if isinstance(analysis, dict) else None
+    transcript = analysis.get("transcript") if isinstance(analysis, dict) else None
+    placeholder = transcript == "<audio_pending_transcription>"
+    if response_obj.status == ResponseStatus.QUEUED:
+        return 0, "QUEUED"
+    # If in progress but not completed in DB yet
+    if response_obj.status == ResponseStatus.COMPLETED:
+        if not has_audio:
+            return 100, "DONE"
+        if has_audio and audio_features and not placeholder and transcript:
+            return 100, "DONE"
+        if has_audio and audio_features and placeholder:
+            return 85, "TRANSCRIPTION_QUEUED"
+        if has_audio and audio_features and not transcript:
+            return 70, "FEATURES_EXTRACTED"
+        # Completed but minimal data
+        return 60, "ANALYSIS_COMPLETED"
+    # Fallback based on celery status
+    if celery_status in {"PENDING", "RECEIVED"}:
+        return 0, "QUEUED"
+    if celery_status == "STARTED":
+        return 30, "ANALYSIS_RUNNING"
+    return 0, "UNKNOWN"
+
+
 # Models (subset aligned with intructions.txt)
 class ToneFeatures(BaseModel):
     pitch_mean_hz: Optional[float] = None
@@ -520,15 +566,45 @@ async def submit_responses(
 @app.get("/api/response-status/{task_id}")
 async def response_status(task_id: str, session=Depends(get_session)):
     status = get_task_status(task_id)
-    # Intentar buscar response asociado
     r = session.exec(select(Response).where(Response.task_id == task_id)).first()
-    resp_payload = {"task_id": task_id, "status": status}
+    progress, phase = _compute_progress(r, status)
+    # Mantener clave legacy 'status' (igual a celery_status) para compatibilidad con tests existentes
+    payload: dict = {"task_id": task_id, "celery_status": status, "status": status, "progress": progress, "phase": phase}
     if r:
-        resp_payload["response_id"] = r.id
-        resp_payload["db_status"] = r.status
+        payload["response_id"] = r.id
+        payload["db_status"] = r.status
         if r.status == ResponseStatus.COMPLETED and r.analysis_json:
-            resp_payload["analysis"] = r.analysis_json
-    return resp_payload
+            payload["analysis"] = r.analysis_json
+    return payload
+
+
+@app.get("/api/tasks/recent")
+async def list_recent_tasks(
+    child_id: Optional[int] = None,
+    limit: int = 50,
+    offset: int = 0,
+    session=Depends(get_session),
+):
+    limit = max(1, min(limit, 200))
+    stmt = select(Response).order_by(desc(Response.created_at))
+    if child_id is not None:
+        stmt = stmt.where(Response.child_id == child_id)
+    rows = list(session.exec(stmt.offset(offset).limit(limit)))
+    out = []
+    for r in rows:
+        progress, phase = _compute_progress(r, "UNKNOWN")
+        out.append(
+            {
+                "response_id": r.id,
+                "task_id": r.task_id,
+                "status": r.status,
+                "created_at": r.created_at.isoformat(),
+                "progress": progress,
+                "phase": phase,
+                "emotion": r.emotion,
+            }
+        )
+    return {"items": out, "limit": limit, "offset": offset}
 
 
 @app.get("/api/responses")
