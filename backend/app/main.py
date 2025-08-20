@@ -498,6 +498,9 @@ async def submit_responses(
         "audio_path": audio_path,
     }
     task_id = enqueue_analysis_task(payload)
+    # Persist task_id para tracking directo sin Celery backend si se desea
+    row.task_id = task_id
+    session.add(row)
     # Notify listeners (WS relay listens on this channel)
     _safe_publish(
         WS_CHANNEL,
@@ -515,9 +518,17 @@ async def submit_responses(
 
 
 @app.get("/api/response-status/{task_id}")
-async def response_status(task_id: str):
+async def response_status(task_id: str, session=Depends(get_session)):
     status = get_task_status(task_id)
-    return {"task_id": task_id, "status": status}
+    # Intentar buscar response asociado
+    r = session.exec(select(Response).where(Response.task_id == task_id)).first()
+    resp_payload = {"task_id": task_id, "status": status}
+    if r:
+        resp_payload["response_id"] = r.id
+        resp_payload["db_status"] = r.status
+        if r.status == ResponseStatus.COMPLETED and r.analysis_json:
+            resp_payload["analysis"] = r.analysis_json
+    return resp_payload
 
 
 @app.get("/api/responses")

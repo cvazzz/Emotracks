@@ -40,6 +40,7 @@ class Response(SQLModel, table=True):
     status: ResponseStatus = Field(default=ResponseStatus.QUEUED)
     analysis_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     child_id: Optional[int] = Field(default=None, foreign_key="child.id", index=True)
+    task_id: Optional[str] = Field(default=None, index=True)
     # Audio pipeline metadata
     audio_path: Optional[str] = Field(default=None, index=True)
     audio_format: Optional[str] = None

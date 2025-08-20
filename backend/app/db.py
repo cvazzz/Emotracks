@@ -82,6 +82,9 @@ def _ensure_sqlite_columns() -> None:
         if "child_id" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE response ADD COLUMN child_id INTEGER"))
+        if "task_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE response ADD COLUMN task_id TEXT"))
         # Audio pipeline new columns (added via migration 0010 in real DBs). For tests/dev on SQLite we patch in-place.
         audio_columns = [
             ("audio_path", "TEXT"),

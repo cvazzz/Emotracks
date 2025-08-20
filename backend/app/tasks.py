@@ -68,6 +68,19 @@ def transcribe_audio_task(payload: dict) -> dict:
                             s.add(row)
                 except Exception:
                     pass
+            # Emitir evento websocket (Redis pub/sub) de transcripción lista
+            try:
+                rds = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+                rds.publish(
+                    "emotrack:updates",
+                    json.dumps({
+                        "type": "transcription_ready",
+                        "response_id": response_id,
+                        "status": "COMPLETED",
+                    })
+                )
+            except Exception:
+                pass
             
             try:
                 TRANSCRIPTION_REQUESTS.labels("success").inc()
@@ -119,6 +132,18 @@ def analyze_text_task(payload: dict) -> dict:
                 "audio_path": normalized_path,
                 "response_id": payload.get("response_id")
             })
+        except Exception:
+            pass
+        # Publicar evento de progreso
+        try:
+            r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            r.publish(
+                "emotrack:updates",
+                json.dumps({
+                    "type": "transcription_queued",
+                    "response_id": payload.get("response_id"),
+                })
+            )
         except Exception:
             pass
     response_id = payload.get("response_id")
