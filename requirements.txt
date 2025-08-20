@@ -16,3 +16,4 @@ pytest-cov==5.0.0
 passlib[bcrypt]==1.7.4
 PyJWT==2.9.0
 prometheus-client==0.21.0
+faster-whisper==1.0.3  # opcional: transcripción (instalar ffmpeg en sistema)
