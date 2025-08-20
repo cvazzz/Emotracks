@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     max_audio_duration_sec: float = float(os.getenv("MAX_AUDIO_DURATION_SEC", "600"))  # límite duro para procesamiento
     enable_audio_normalization: bool = os.getenv("ENABLE_AUDIO_NORMALIZATION", "0") in {"1", "true", "True"}
     enable_audio_features: bool = os.getenv("ENABLE_AUDIO_FEATURES", "1") in {"1", "true", "True"}
+    transcription_model: str = os.getenv("TRANSCRIPTION_MODEL", "base")
+    ffmpeg_path: str = os.getenv("FFMPEG_PATH", "ffmpeg")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

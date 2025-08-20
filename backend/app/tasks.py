@@ -12,7 +12,8 @@ from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
 from .settings import settings
-from .audio_utils import normalizar_audio, extraer_features_audio
+from .audio_utils import normalizar_audio, extraer_features_audio, transcribir_audio
+from .metrics import TRANSCRIPTION_REQUESTS, TRANSCRIPTION_LATENCY
 import os
 import wave
 import contextlib
@@ -44,13 +45,39 @@ def analyze_text_task(payload: dict) -> dict:
     audio_path = payload.get("audio_path")
     audio_duration = _extract_duration_seconds(audio_path) if audio_path else None
     audio_features_extra = {}
+    normalized_path = audio_path
     if audio_path and settings.enable_audio_features:
         try:
-            norm_path = normalizar_audio(audio_path)
-            feats = extraer_features_audio(norm_path)
+            normalized_path = normalizar_audio(audio_path)
+            feats = extraer_features_audio(normalized_path)
             audio_features_extra.update(feats)
         except Exception:
             pass
+    transcript_added = False
+    if normalized_path and settings.enable_transcription:
+        start_tx = None
+        try:
+            start_tx = datetime.now().timestamp()
+            TRANSCRIPTION_REQUESTS.labels("attempt").inc()
+        except Exception:
+            pass
+        tx = transcribir_audio(normalized_path)
+        if tx:
+            result_transcript = tx
+            transcript_added = True
+            if start_tx:
+                try:
+                    TRANSCRIPTION_REQUESTS.labels("success").inc()
+                    TRANSCRIPTION_LATENCY.labels("success").observe(datetime.now().timestamp() - start_tx)
+                except Exception:
+                    pass
+        else:
+            if start_tx:
+                try:
+                    TRANSCRIPTION_REQUESTS.labels("failed").inc()
+                    TRANSCRIPTION_LATENCY.labels("failed").observe(datetime.now().timestamp() - start_tx)
+                except Exception:
+                    pass
     response_id = payload.get("response_id")
     payload_child_id = payload.get("child_id")
     # Allow forcing intensity (test support) else mock default 0.2 / 0.9 for high text tokens
@@ -90,7 +117,10 @@ def analyze_text_task(payload: dict) -> dict:
             }
     # Placeholder: si audio_path y no transcript, mantener campo para futura transcripción
     if audio_path and not result.get("transcript"):
-        result["transcript"] = "<audio_pending_transcription>"
+        if transcript_added:
+            result["transcript"] = result_transcript  # type: ignore[name-defined]
+        else:
+            result["transcript"] = "<audio_pending_transcription>"
     if audio_duration is not None or audio_features_extra:
         af = result.get("audio_features") or {}
         if audio_duration is not None:

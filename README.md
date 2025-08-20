@@ -26,6 +26,9 @@
    - `emotrack_grok_requests_total{outcome}` (outcome: ok|fallback|disabled)
    - `emotrack_grok_request_latency_seconds{outcome}`
    - `emotrack_grok_fallbacks_total{reason}` (reason = causa agregada de fallback)
+ - Transcripción:
+   - `emotrack_transcription_requests_total{status}` (attempt|success|failed)
+   - `emotrack_transcription_latency_seconds{status}`
 - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
 ### Alertas
  - `rule_version` para versionado (v2)
@@ -79,6 +82,8 @@ pwsh scripts/tasks.ps1 openapi
   - `audio_path`, `audio_format`, `audio_duration_sec`, `transcript`.
 - Actualmente: duración se intenta extraer solo para WAV (simple `wave`); otros formatos quedan con `audio_duration_sec = null`.
 - Transcripción pendiente (placeholder `<audio_pending_transcription>` si no hay texto).
+- Normalización opcional vía ffmpeg (flag `ENABLE_AUDIO_NORMALIZATION=1`) a WAV 16k mono.
+- Transcripción opcional vía `faster-whisper` si `ENABLE_TRANSCRIPTION=1` (requiere instalar dependencia y modelo).
 - Flags/vars:
   - `ENABLE_TRANSCRIPTION` (futuro, hoy sin efecto real) 
   - `MAX_AUDIO_DURATION_SEC` (límite preventivo futuro)
@@ -165,6 +170,10 @@ MAX_AUDIO_DURATION_SEC=600
 DYNAMIC_CONFIG_ENABLED=1
 RATE_LIMIT_REQUESTS_PER_MINUTE=60
 RATE_LIMIT_BURST=20
+ +ENABLE_AUDIO_NORMALIZATION=0
+ +ENABLE_AUDIO_FEATURES=1
+ +TRANSCRIPTION_MODEL=base
+ +FFMPEG_PATH=ffmpeg
 ```
 
 ## Roadmap corto

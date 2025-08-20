@@ -35,6 +35,14 @@ GROK_FALLBACKS = Counter(
     "emotrack_grok_fallbacks_total", "Usos de fallback de análisis (mock)", ["reason"]
 )
 
+# Transcripción audio
+TRANSCRIPTION_REQUESTS = Counter(
+    "emotrack_transcription_requests_total", "Intentos de transcripción de audio", ["status"]
+)
+TRANSCRIPTION_LATENCY = Histogram(
+    "emotrack_transcription_latency_seconds", "Latencia de transcripción de audio", ["status"]
+)
+
 __all__ = [
     "REQUEST_COUNT",
     "REQUEST_LATENCY",
@@ -45,4 +53,6 @@ __all__ = [
     "GROK_REQUEST_LATENCY",
     "GROK_REQUESTS",
     "GROK_FALLBACKS",
+    "TRANSCRIPTION_REQUESTS",
+    "TRANSCRIPTION_LATENCY",
 ]
