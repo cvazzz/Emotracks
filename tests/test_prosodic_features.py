@@ -8,14 +8,10 @@ from backend.app.audio_utils import limpiar_archivos_antiguos
 
 def test_prosodic_features_extraction():
     """Test extracción de características prosódicas con librosa (si disponible)."""
-    try:
-        import numpy as np
-        import librosa
-        import soundfile as sf
-        from backend.app.audio_utils import _extraer_features_prosodicos
-    except ImportError:
-        import pytest
-        pytest.skip("librosa/soundfile/numpy no disponible")
+    import numpy as np
+    import librosa  # noqa: F401
+    import soundfile as sf
+    from backend.app.audio_utils import _extraer_features_prosodicos
     
     # Crear audio sintético simple
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
