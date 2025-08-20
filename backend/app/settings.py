@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     transcription_cache_enabled: bool = os.getenv("TRANSCRIPTION_CACHE_ENABLED", "1") in {"1", "true", "True"}
     ffmpeg_path: str = os.getenv("FFMPEG_PATH", "ffmpeg")
     allowed_audio_formats: list[str] = os.getenv("ALLOWED_AUDIO_FORMATS", "wav,mp3,webm,ogg,m4a").split(",")
+    # Features prosódicas avanzadas
+    enable_prosodic_features: bool = os.getenv("ENABLE_PROSODIC_FEATURES", "0") in {"1", "true", "True"}
+    # Limpieza automática
+    audio_cleanup_days: int = int(os.getenv("AUDIO_CLEANUP_DAYS", "7"))  # días antes de limpiar archivos
+    enable_audio_compression: bool = os.getenv("ENABLE_AUDIO_COMPRESSION", "0") in {"1", "true", "True"}
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -14,7 +14,10 @@ TRANSCRIPTION_MODEL=base
 TRANSCRIPTION_LANGUAGE=auto
 TRANSCRIPTION_CACHE_ENABLED=1
 ALLOWED_AUDIO_FORMATS=wav,mp3,webm,ogg,m4a
-FFMPEG_PATH=ffmpeg), GET /api/auth/me
+FFMPEG_PATH=ffmpeg
+ENABLE_PROSODIC_FEATURES=0
+AUDIO_CLEANUP_DAYS=7
+ENABLE_AUDIO_COMPRESSION=0), GET /api/auth/me
  - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
  - Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
  - Crear response directo para child: POST /api/children/{id}/responses
@@ -87,22 +90,24 @@ pwsh scripts/tasks.ps1 test
 pwsh scripts/tasks.ps1 openapi
 ```
 
-## Audio / Transcripción (fase inicial)
+## Audio / Transcripción (completado)
 - Endpoint `/api/submit-responses` acepta `audio_file` (multipart) además de texto / emoji.
 - **Validación**: tamaño máximo (`MAX_AUDIO_FILE_SIZE_MB`), formatos permitidos (`ALLOWED_AUDIO_FORMATS`), duración máxima para WAV.
 - Archivo se persiste en `uploads/` con nombre único tras validación.
-- Columnas nuevas en `response`:
-  - `audio_path`, `audio_format`, `audio_duration_sec`, `transcript`.
 - **Normalización** opcional vía ffmpeg (flag `ENABLE_AUDIO_NORMALIZATION=1`) a WAV 16k mono.
+- **Compresión** opcional (`ENABLE_AUDIO_COMPRESSION=1`) para reducir almacenamiento.
+- **Características prosódicas** avanzadas con librosa (`ENABLE_PROSODIC_FEATURES=1`):
+  - Pitch (F0) medio y desviación estándar
+  - Energía (RMS) y características espectrales
+  - MFCC, centroide espectral, ratio de pausas
+  - Integración con análisis emocional Grok
 - **Transcripción** opcional vía `faster-whisper` con:
   - Caché de transcripciones (`TRANSCRIPTION_CACHE_ENABLED=1`)
   - Cola separada (`transcription` queue) para no bloquear análisis
   - Soporte multiidioma (`TRANSCRIPTION_LANGUAGE=auto|es|en|...`)
-- Flags/vars:
-  - `ENABLE_TRANSCRIPTION=0/1`, `TRANSCRIPTION_MODEL=base`, `TRANSCRIPTION_LANGUAGE=auto`
-  - `MAX_AUDIO_DURATION_SEC=600`, `MAX_AUDIO_FILE_SIZE_MB=50`
-  - `ALLOWED_AUDIO_FORMATS=wav,mp3,webm,ogg,m4a`
-  - `TRANSCRIPTION_CACHE_ENABLED=1`
+- **Limpieza automática**: tarea `cleanup.audio` elimina archivos antiguos (`AUDIO_CLEANUP_DAYS=7`)
+- **Endpoint admin**: `/api/admin/cleanup-audio` para limpieza manual
+- Columnas DB: `audio_path`, `audio_format`, `audio_duration_sec`, `transcript`
 
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings
@@ -192,11 +197,22 @@ RATE_LIMIT_BURST=20
  +FFMPEG_PATH=ffmpeg
 ```
 
-## Roadmap corto
-- [ ] Implementar transcripción (Whisper local o API) con caché y tiempo máximo.
-- [ ] Normalizar formatos (ffmpeg) a 16k mono WAV antes de análisis.
-- [ ] Extraer features de audio (pitch, energy) para `tone_features`.
-- [ ] Endpoint de polling mejorado que incluya progreso de transcripción.
-- [ ] Pruebas unitarias de flujo con audio simulado y duración.
+## Roadmap completado ✅
+- ✅ Implementar transcripción (Whisper local) con caché y tiempo máximo.
+- ✅ Normalizar formatos (ffmpeg) a 16k mono WAV antes de análisis.
+- ✅ Extraer features de audio (pitch, energy, MFCC) para `tone_features`.
+- ✅ Endpoint de polling mejorado que incluya progreso de transcripción.
+- ✅ Pruebas unitarias de flujo con audio simulado y duración.
+- ✅ Validación completa (tamaño, formato, duración).
+- ✅ Cola separada para transcripción asíncrona.
+- ✅ Compresión y limpieza automática de archivos.
+- ✅ Integración prosódica con análisis emocional.
+
+## Próximas mejoras opcionales
+- [ ] Dashboard en tiempo real con WebSocket para transcripciones.
+- [ ] Análisis de sentimientos por lotes para performance.
+- [ ] API de estadísticas de uso de audio/transcripción.
+- [ ] Soporte para video (extracción de audio).
+- [ ] Modelos Whisper especializados por edad/contexto.
 
 

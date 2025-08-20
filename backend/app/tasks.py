@@ -12,7 +12,7 @@ from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
 from .settings import settings
-from .audio_utils import normalizar_audio, extraer_features_audio, transcribir_audio
+from .audio_utils import normalizar_audio, extraer_features_audio, transcribir_audio, comprimir_audio
 from .metrics import TRANSCRIPTION_REQUESTS, TRANSCRIPTION_LATENCY
 import os
 import wave
@@ -104,6 +104,9 @@ def analyze_text_task(payload: dict) -> dict:
     if audio_path and settings.enable_audio_features:
         try:
             normalized_path = normalizar_audio(audio_path)
+            # Comprimir si está habilitado
+            if settings.enable_audio_compression:
+                normalized_path = comprimir_audio(normalized_path)
             feats = extraer_features_audio(normalized_path)
             audio_features_extra.update(feats)
         except Exception:
@@ -140,7 +143,7 @@ def analyze_text_task(payload: dict) -> dict:
         }
     else:
         try:
-            result = grok_analyze(text)
+            result = grok_analyze(text, audio_features_extra)
         except Exception:
             # Fallback a mock simple (no fuerza intensidades altas salvo palabra ALTO)
             result = {
@@ -149,7 +152,7 @@ def analyze_text_task(payload: dict) -> dict:
                 "polarity": "Neutro",
                 "keywords": [],
                 "tone_features": None,
-                "audio_features": None,
+                "audio_features": audio_features_extra if audio_features_extra else None,
                 "transcript": text,
                 "confidence": 0.5,
                 "model_version": "mock-worker-fallback-exc",
@@ -241,6 +244,17 @@ def analyze_text_task(payload: dict) -> dict:
     except Exception:
         pass
     return result
+
+
+@celery_app.task(name="cleanup.audio")
+def cleanup_old_audio_task() -> dict:
+    """Tarea de limpieza periódica de archivos de audio antiguos."""
+    try:
+        from .audio_utils import limpiar_archivos_antiguos
+        cleaned_count = limpiar_archivos_antiguos()
+        return {"status": "success", "cleaned_files": cleaned_count}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 def enqueue_analysis_task(payload: dict) -> str:

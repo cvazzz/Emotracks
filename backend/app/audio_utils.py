@@ -134,12 +134,79 @@ def _duracion_wav(path: str) -> Optional[float]:
 
 
 def extraer_features_audio(path: str) -> Dict:
-    """Devuelve un dict con features básicos (duración si WAV)."""
+    """Devuelve un dict con features básicos (duración si WAV) y prosódicos si habilitado."""
     feats: Dict[str, float] = {}
     dur = _duracion_wav(path)
     if dur is not None:
         feats["duration_sec"] = dur
+    
+    # Features prosódicas avanzadas con librosa (opcional)
+    if settings.enable_prosodic_features:
+        prosodic_feats = _extraer_features_prosodicos(path)
+        feats.update(prosodic_feats)
+    
     return feats
+
+
+def _extraer_features_prosodicos(path: str) -> Dict[str, float]:
+    """Extrae características prosódicas usando librosa."""
+    try:
+        import librosa
+        import numpy as np
+    except ImportError:
+        return {}
+    
+    try:
+        # Cargar audio (librosa normaliza automáticamente)
+        y, sr = librosa.load(path, sr=16000, duration=30.0)  # máximo 30s para eficiencia
+        
+        if len(y) == 0:
+            return {}
+        
+        # Pitch (F0) usando algoritmo piptrack
+        pitches, magnitudes = librosa.piptrack(y=y, sr=sr, threshold=0.1)
+        pitch_values = []
+        for t in range(pitches.shape[1]):
+            index = magnitudes[:, t].argmax()
+            pitch = pitches[index, t]
+            if pitch > 0:
+                pitch_values.append(pitch)
+        
+        # Energía RMS
+        rms = librosa.feature.rms(y=y)[0]
+        energy_mean = float(np.mean(rms))
+        energy_std = float(np.std(rms))
+        
+        # Spectral centroid (brillo)
+        spectral_centroids = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+        spectral_centroid_mean = float(np.mean(spectral_centroids))
+        
+        # MFCC (características espectrales)
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        mfcc_mean = float(np.mean(mfccs))
+        mfcc_std = float(np.std(mfccs))
+        
+        # Detectar pausas (segmentos de baja energía)
+        pause_threshold = energy_mean * 0.1
+        pause_frames = np.sum(rms < pause_threshold)
+        pause_ratio = float(pause_frames / len(rms))
+        
+        features = {
+            "pitch_mean_hz": float(np.mean(pitch_values)) if pitch_values else 0.0,
+            "pitch_std_hz": float(np.std(pitch_values)) if len(pitch_values) > 1 else 0.0,
+            "energy_mean_db": energy_mean,
+            "energy_std_db": energy_std,
+            "spectral_centroid_hz": spectral_centroid_mean,
+            "mfcc_mean": mfcc_mean,
+            "mfcc_std": mfcc_std,
+            "pause_ratio": pause_ratio,
+            "pitch_range_hz": float(np.max(pitch_values) - np.min(pitch_values)) if len(pitch_values) > 1 else 0.0,
+        }
+        
+        return features
+        
+    except Exception:
+        return {}
 
 
 def transcribir_audio(path: str) -> Optional[str]:
@@ -181,4 +248,71 @@ def transcribir_audio(path: str) -> Optional[str]:
         return None
 
 
-__all__ = ["normalizar_audio", "extraer_features_audio", "transcribir_audio", "validar_audio", "AudioValidationError"]
+def comprimir_audio(path: str) -> str:
+    """Comprime archivo de audio si está habilitado."""
+    if not settings.enable_audio_compression:
+        return path
+    
+    # Solo comprimir si no es WAV ya comprimido
+    if path.lower().endswith('.wav'):
+        return path
+    
+    try:
+        compressed_path = path.rsplit('.', 1)[0] + '_compressed.wav'
+        cmd = [
+            settings.ffmpeg_path, '-y', '-i', path,
+            '-ac', '1', '-ar', '16000', '-b:a', '64k',
+            compressed_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        
+        # Si compresión exitosa y archivo es menor, reemplazar
+        if os.path.isfile(compressed_path):
+            original_size = os.path.getsize(path)
+            compressed_size = os.path.getsize(compressed_path)
+            if compressed_size < original_size * 0.8:  # al menos 20% de reducción
+                os.replace(compressed_path, path)
+                return path
+            else:
+                os.unlink(compressed_path)
+        
+    except Exception:
+        pass
+    
+    return path
+
+
+def limpiar_archivos_antiguos() -> int:
+    """Limpia archivos de audio más antiguos que audio_cleanup_days."""
+    if settings.audio_cleanup_days <= 0:
+        return 0
+    
+    import time
+    
+    uploads_dir = "uploads"
+    if not os.path.isdir(uploads_dir):
+        return 0
+    
+    cutoff_time = time.time() - (settings.audio_cleanup_days * 24 * 3600)
+    cleaned = 0
+    
+    try:
+        for filename in os.listdir(uploads_dir):
+            filepath = os.path.join(uploads_dir, filename)
+            if os.path.isfile(filepath):
+                # Solo limpiar archivos de audio (no caché de transcripción)
+                if any(filename.lower().endswith(f'.{ext}') for ext in settings.allowed_audio_formats):
+                    if os.path.getmtime(filepath) < cutoff_time:
+                        try:
+                            os.unlink(filepath)
+                            cleaned += 1
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    
+    return cleaned
+
+
+__all__ = ["normalizar_audio", "extraer_features_audio", "transcribir_audio", "validar_audio", 
+           "AudioValidationError", "comprimir_audio", "limpiar_archivos_antiguos"]

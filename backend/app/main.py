@@ -839,6 +839,17 @@ async def websocket_endpoint(ws: WebSocket):
         except Exception:
             pass
 
+@app.get("/api/admin/cleanup-audio", status_code=200)
+async def cleanup_audio_endpoint(user=Depends(require_roles(UserRole.ADMIN))):
+    """Endpoint para limpiar archivos de audio antiguos manualmente."""
+    try:
+        from .tasks import cleanup_old_audio_task
+        task = cleanup_old_audio_task.delay()
+        return {"status": "cleanup_queued", "task_id": task.id}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # Static files (Flutter Web build)
 _env_static = os.getenv("STATIC_DIR")
 _static_dir_candidates = []

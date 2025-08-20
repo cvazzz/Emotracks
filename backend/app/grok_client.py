@@ -59,9 +59,12 @@ def _mock_analysis(text: str) -> dict:
     }
 
 
-def analyze_text(text: str) -> dict:
+def analyze_text(text: str, audio_features: dict = None) -> dict:
     if not settings.grok_enabled or not settings.grok_api_key:
         fb = _mock_analysis(text)
+        # Incorporar features de audio en análisis mock si están disponibles
+        if audio_features:
+            fb = _enrich_with_audio_features(fb, audio_features)
         try:
             GROK_REQUESTS.labels("disabled").inc()
             GROK_FALLBACKS.labels("disabled").inc()
@@ -78,6 +81,7 @@ def analyze_text(text: str) -> dict:
         "model": settings.grok_model,
         "input": text,
         "tasks": ["emotion"],
+        "audio_features": audio_features or {},  # Enviar features de audio si están disponibles
     }
     retries = 3
     backoff = 0.6
@@ -95,8 +99,8 @@ def analyze_text(text: str) -> dict:
                     "intensity": intensity,
                     "polarity": em_data.get("polarity", "Neutro"),
                     "keywords": em_data.get("keywords", []),
-                    "tone_features": None,
-                    "audio_features": None,
+                    "tone_features": _audio_features_to_tone(audio_features) if audio_features else None,
+                    "audio_features": audio_features,
                     "transcript": text,
                     "confidence": float(em_data.get("confidence", 0.5)),
                     "model_version": f"grok:{settings.grok_model}",
@@ -123,6 +127,9 @@ def analyze_text(text: str) -> dict:
         backoff *= 1.8
     fb = _mock_analysis(text)
     fb["model_version"] += f";fallback_reason={last_error}"
+    # Incorporar features de audio en fallback también
+    if audio_features:
+        fb = _enrich_with_audio_features(fb, audio_features)
     try:
         GROK_REQUESTS.labels("fallback").inc()
         GROK_FALLBACKS.labels(last_error or "unknown").inc()
@@ -130,6 +137,38 @@ def analyze_text(text: str) -> dict:
     except Exception:
         pass
     return fb
+
+
+def _enrich_with_audio_features(analysis: dict, audio_features: dict) -> dict:
+    """Enriquece análisis mock con características de audio."""
+    analysis = analysis.copy()
+    analysis["audio_features"] = audio_features
+    
+    # Mapear features prosódicos a tone_features
+    analysis["tone_features"] = _audio_features_to_tone(audio_features)
+    
+    # Ajustar intensidad basado en energía de voz si disponible
+    if "energy_mean_db" in audio_features:
+        energy = audio_features["energy_mean_db"]
+        if energy > 0.3:  # alta energía
+            analysis["intensity"] = min(1.0, analysis["intensity"] + 0.2)
+        elif energy < 0.1:  # baja energía
+            analysis["intensity"] = max(0.0, analysis["intensity"] - 0.1)
+    
+    return analysis
+
+
+def _audio_features_to_tone(audio_features: dict) -> dict:
+    """Convierte features de audio a estructura tone_features."""
+    if not audio_features:
+        return {}
+    
+    return {
+        "pitch_mean_hz": audio_features.get("pitch_mean_hz"),
+        "pitch_std_hz": audio_features.get("pitch_std_hz"),
+        "speech_rate_wpm": None,  # TODO: calcular desde pausas
+        "voice_intensity_db": audio_features.get("energy_mean_db"),
+    }
 
 
 __all__ = ["analyze_text", "GrokClientError"]
