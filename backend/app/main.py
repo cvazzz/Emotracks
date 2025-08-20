@@ -53,6 +53,7 @@ from fastapi import Response as FastAPIResponse
 from .models import Alert
 from .alert_rules import RULE_VERSION_V2
 from .alert_rules import evaluate_auto_alerts
+from .models import AppConfig
 
 logger = structlog.get_logger()
 
@@ -217,6 +218,29 @@ class CreateChildResponsePayload(BaseModel):
     force_intensity: Optional[float] = None
 
 
+class AlertThresholds(BaseModel):
+    intensity_high: float
+    emotion_streak_length: int
+    avg_count: int
+    avg_threshold: float
+
+
+class AlertSeverities(BaseModel):
+    intensity_high: str
+    emotion_streak: str
+    avg_intensity_high: str
+
+
+def _load_dynamic_thresholds(session) -> dict:
+    if not settings.dynamic_config_enabled:
+        return {}
+    rows = list(session.exec(select(AppConfig).where(AppConfig.key.like("alert_%"))))
+    result = {}
+    for r in rows:
+        result[r.key] = r.value
+    return result
+
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -245,6 +269,71 @@ def require_roles(*roles: UserRole):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/config/alert-thresholds", response_model=AlertThresholds)
+def get_alert_thresholds(session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    overrides = _load_dynamic_thresholds(session)
+    return AlertThresholds(
+        intensity_high=float(overrides.get("alert_intensity_high_threshold", settings.alert_intensity_high_threshold)),
+        emotion_streak_length=int(overrides.get("alert_emotion_streak_length", settings.alert_emotion_streak_length)),
+        avg_count=int(overrides.get("alert_avg_intensity_count", settings.alert_avg_intensity_count)),
+        avg_threshold=float(overrides.get("alert_avg_intensity_threshold", settings.alert_avg_intensity_threshold)),
+    )
+
+
+@app.put("/api/config/alert-thresholds", response_model=AlertThresholds)
+def update_alert_thresholds(payload: AlertThresholds, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    if not settings.dynamic_config_enabled:
+        raise HTTPException(status_code=400, detail="dynamic_config_disabled")
+    # Upsert keys
+    mapping = {
+        "alert_intensity_high_threshold": str(payload.intensity_high),
+        "alert_emotion_streak_length": str(payload.emotion_streak_length),
+        "alert_avg_intensity_count": str(payload.avg_count),
+        "alert_avg_intensity_threshold": str(payload.avg_threshold),
+    }
+    for k, v in mapping.items():
+        row = session.exec(select(AppConfig).where(AppConfig.key == k)).first()
+        if row:
+            row.value = v
+        else:
+            session.add(AppConfig(key=k, value=v))
+    return payload
+
+
+@app.get("/api/config/alert-severities", response_model=AlertSeverities)
+def get_alert_severities(session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    overrides = _load_dynamic_thresholds(session) if settings.dynamic_config_enabled else {}
+    def _norm(v: str, d: str) -> str:
+        vv = (v or d).lower()
+        return vv if vv in {"info", "warning", "critical"} else d
+    return AlertSeverities(
+        intensity_high=_norm(overrides.get("alert_severity_intensity_high", "critical"), "critical"),
+        emotion_streak=_norm(overrides.get("alert_severity_emotion_streak", "warning"), "warning"),
+        avg_intensity_high=_norm(overrides.get("alert_severity_avg_intensity_high", "warning"), "warning"),
+    )
+
+
+@app.put("/api/config/alert-severities", response_model=AlertSeverities)
+def update_alert_severities(payload: AlertSeverities, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    if not settings.dynamic_config_enabled:
+        raise HTTPException(status_code=400, detail="dynamic_config_disabled")
+    mapping = {
+        "alert_severity_intensity_high": payload.intensity_high.lower(),
+        "alert_severity_emotion_streak": payload.emotion_streak.lower(),
+        "alert_severity_avg_intensity_high": payload.avg_intensity_high.lower(),
+    }
+    for v in mapping.values():
+        if v not in {"info", "warning", "critical"}:
+            raise HTTPException(status_code=400, detail="severity_invalid")
+    for k, v in mapping.items():
+        row = session.exec(select(AppConfig).where(AppConfig.key == k)).first()
+        if row:
+            row.value = v
+        else:
+            session.add(AppConfig(key=k, value=v))
+    return payload
 
 
 @app.get("/api/debug/boom")
@@ -357,16 +446,47 @@ async def submit_responses(
     session=Depends(get_session),
 ):
     # Minimal: persist file later; for now, enqueue text for analysis
+    audio_path = None
     if audio_file is not None:
-        # In future: save to uploads/ and record path
-        logger.info("received_audio", filename=audio_file.filename)
+        try:
+            # Validar archivo antes de guardarlo
+            content = await audio_file.read()
+            from .audio_utils import validar_audio, AudioValidationError
+            
+            # Guardar temporalmente para validación
+            os.makedirs("uploads", exist_ok=True)
+            suffix = os.path.splitext(audio_file.filename or "audio.webm")[1] or ".webm"
+            fname = f"resp_{int(asyncio.get_event_loop().time()*1000)}_{os.getpid()}{suffix}"
+            audio_path = os.path.join("uploads", fname)
+            
+            with open(audio_path, "wb") as f:
+                f.write(content)
+            
+            # Validar formato, tamaño y duración
+            try:
+                validar_audio(audio_path, len(content))
+            except AudioValidationError as e:
+                # Limpiar archivo inválido
+                try:
+                    os.unlink(audio_path)
+                except Exception:
+                    pass
+                raise HTTPException(status_code=400, detail=f"Audio inválido: {str(e)}")
+            
+            logger.info("stored_audio", path=audio_path, size=len(content))
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("audio_store_failed", error=str(e))
+            # Si falla el almacenamiento, continuar sin audio
+            audio_path = None
     # Minimal persistence (status QUEUED)
     child_name = (child_id or "child").strip() or "child"
     # child_id numérico opcional si viene convertible
     numeric_child_id = None
     if child_id and child_id.isdigit():
         numeric_child_id = int(child_id)
-    row = Response(child_name=child_name, child_id=numeric_child_id, emotion="Unknown", status=ResponseStatus.QUEUED)
+    row = Response(child_name=child_name, child_id=numeric_child_id, emotion="Unknown", status=ResponseStatus.QUEUED, audio_path=audio_path, audio_format=(os.path.splitext(audio_path)[1][1:] if audio_path else None))
     session.add(row)
     session.flush()  # to get id
 
@@ -375,6 +495,7 @@ async def submit_responses(
         "child_id": child_id,
         "emoji": selected_emoji,
         "response_id": row.id,
+        "audio_path": audio_path,
     }
     task_id = enqueue_analysis_task(payload)
     # Notify listeners (WS relay listens on this channel)
@@ -555,6 +676,11 @@ def create_alert(payload: AlertCreate, session=Depends(get_session), user=Depend
     session.add(alert)
     session.flush()
     assert alert.id is not None
+    try:
+        from .metrics import ALERTS_TOTAL_BY_TYPE
+        ALERTS_TOTAL_BY_TYPE.labels(alert.type, alert.severity).inc()
+    except Exception:
+        pass
     return {
         "id": alert.id,
         "child_id": alert.child_id,

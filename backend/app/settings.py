@@ -38,10 +38,14 @@ class Settings(BaseSettings):
     # Audio / transcripción
     enable_transcription: bool = os.getenv("ENABLE_TRANSCRIPTION", "0") in {"1", "true", "True"}
     max_audio_duration_sec: float = float(os.getenv("MAX_AUDIO_DURATION_SEC", "600"))  # límite duro para procesamiento
+    max_audio_file_size_mb: float = float(os.getenv("MAX_AUDIO_FILE_SIZE_MB", "50"))  # límite de tamaño
     enable_audio_normalization: bool = os.getenv("ENABLE_AUDIO_NORMALIZATION", "0") in {"1", "true", "True"}
     enable_audio_features: bool = os.getenv("ENABLE_AUDIO_FEATURES", "1") in {"1", "true", "True"}
     transcription_model: str = os.getenv("TRANSCRIPTION_MODEL", "base")
+    transcription_language: str = os.getenv("TRANSCRIPTION_LANGUAGE", "auto")  # auto, es, en, etc.
+    transcription_cache_enabled: bool = os.getenv("TRANSCRIPTION_CACHE_ENABLED", "1") in {"1", "true", "True"}
     ffmpeg_path: str = os.getenv("FFMPEG_PATH", "ffmpeg")
+    allowed_audio_formats: list[str] = os.getenv("ALLOWED_AUDIO_FORMATS", "wav,mp3,webm,ogg,m4a").split(",")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

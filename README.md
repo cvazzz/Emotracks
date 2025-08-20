@@ -2,7 +2,19 @@
 
 ## Endpoints (MVP actual)
  - GET /health
- - Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, POST /api/auth/logout (revoca refresh), GET /api/auth/me
+ - Auth: POST /api/auth/register, /api/auth/login, /api/auth/refresh, POST /api/auth/logout (revocENABLE_TRANSCRIPTION=0
+MAX_AUDIO_DURATION_SEC=600
+MAX_AUDIO_FILE_SIZE_MB=50
+DYNAMIC_CONFIG_ENABLED=1
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_BURST=20
+ENABLE_AUDIO_NORMALIZATION=0
+ENABLE_AUDIO_FEATURES=1
+TRANSCRIPTION_MODEL=base
+TRANSCRIPTION_LANGUAGE=auto
+TRANSCRIPTION_CACHE_ENABLED=1
+ALLOWED_AUDIO_FORMATS=wav,mp3,webm,ogg,m4a
+FFMPEG_PATH=ffmpeg), GET /api/auth/me
  - Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}
  - Attach responses existentes: POST /api/children/{id}/attach-responses { response_ids: [] }
  - Crear response directo para child: POST /api/children/{id}/responses
@@ -77,16 +89,20 @@ pwsh scripts/tasks.ps1 openapi
 
 ## Audio / Transcripción (fase inicial)
 - Endpoint `/api/submit-responses` acepta `audio_file` (multipart) además de texto / emoji.
-- Archivo se persiste en `uploads/` con nombre único.
+- **Validación**: tamaño máximo (`MAX_AUDIO_FILE_SIZE_MB`), formatos permitidos (`ALLOWED_AUDIO_FORMATS`), duración máxima para WAV.
+- Archivo se persiste en `uploads/` con nombre único tras validación.
 - Columnas nuevas en `response`:
   - `audio_path`, `audio_format`, `audio_duration_sec`, `transcript`.
-- Actualmente: duración se intenta extraer solo para WAV (simple `wave`); otros formatos quedan con `audio_duration_sec = null`.
-- Transcripción pendiente (placeholder `<audio_pending_transcription>` si no hay texto).
-- Normalización opcional vía ffmpeg (flag `ENABLE_AUDIO_NORMALIZATION=1`) a WAV 16k mono.
-- Transcripción opcional vía `faster-whisper` si `ENABLE_TRANSCRIPTION=1` (requiere instalar dependencia y modelo).
+- **Normalización** opcional vía ffmpeg (flag `ENABLE_AUDIO_NORMALIZATION=1`) a WAV 16k mono.
+- **Transcripción** opcional vía `faster-whisper` con:
+  - Caché de transcripciones (`TRANSCRIPTION_CACHE_ENABLED=1`)
+  - Cola separada (`transcription` queue) para no bloquear análisis
+  - Soporte multiidioma (`TRANSCRIPTION_LANGUAGE=auto|es|en|...`)
 - Flags/vars:
-  - `ENABLE_TRANSCRIPTION` (futuro, hoy sin efecto real) 
-  - `MAX_AUDIO_DURATION_SEC` (límite preventivo futuro)
+  - `ENABLE_TRANSCRIPTION=0/1`, `TRANSCRIPTION_MODEL=base`, `TRANSCRIPTION_LANGUAGE=auto`
+  - `MAX_AUDIO_DURATION_SEC=600`, `MAX_AUDIO_FILE_SIZE_MB=50`
+  - `ALLOWED_AUDIO_FORMATS=wav,mp3,webm,ogg,m4a`
+  - `TRANSCRIPTION_CACHE_ENABLED=1`
 
 ## Structure
 - backend/app: FastAPI app, Celery app, tasks, settings

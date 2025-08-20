@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 from typing import Optional, TYPE_CHECKING
 
 # Intentamos importar dependencias externas. Si no están instaladas, lanzamos un error claro.
@@ -21,7 +22,7 @@ import redis
 import json
 from .db import session_scope
 from sqlalchemy.orm import Session
-from .models import User, UserRole
+from .models import User, UserRole, RevokedToken
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -54,12 +55,15 @@ def create_access_token(sub: str, role: str, expires_minutes: int = 30) -> str:
 
 def create_refresh_token(sub: str, role: str, expires_days: int = 7) -> str:
     now = datetime.now(timezone.utc)
+    jti_source = f"{sub}:{role}:{now.timestamp()}:{settings.secret_key[:8]}"
+    jti = hashlib.sha256(jti_source.encode()).hexdigest()[:32]
     payload = {
         "sub": sub,
         "role": role,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(days=expires_days)).timestamp()),
         "type": "refresh",
+        "jti": jti,
     }
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
@@ -79,11 +83,27 @@ except Exception:  # pragma: no cover - Redis no disponible
     _redis_client = None
 
 
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def revoke_refresh_token(token: str) -> None:
     _revoked_refresh_tokens_memory.add(token)
+    token_hash = _token_hash(token)
+    # Persist in DB
+    try:
+        with session_scope() as s:
+            exp = None
+            payload = decode_token(token)
+            if payload and payload.get("exp"):
+                exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+            rec = RevokedToken(jti_hash=token_hash, token_type="refresh", expires_at=exp)
+            s.add(rec)
+    except Exception:
+        pass
     if _redis_client is not None:
         try:
-            _redis_client.setex(f"revoked:refresh:{hash(token)}", settings.refresh_token_expire_days * 86400, "1")
+            _redis_client.setex(f"revoked:refresh:{token_hash}", settings.refresh_token_expire_days * 86400, "1")
         except Exception:
             pass
 
@@ -91,12 +111,24 @@ def revoke_refresh_token(token: str) -> None:
 def is_refresh_token_revoked(token: str) -> bool:
     if token in _revoked_refresh_tokens_memory:
         return True
+    token_hash = _token_hash(token)
+    # Redis check
     if _redis_client is not None:
         try:
-            val = _redis_client.get(f"revoked:refresh:{hash(token)}")
-            return val == "1"
+            val = _redis_client.get(f"revoked:refresh:{token_hash}")
+            if val == "1":
+                return True
         except Exception:
-            return False
+            pass
+    # DB check
+    try:
+        with session_scope() as s:
+            stmt = select(RevokedToken).where(RevokedToken.jti_hash == token_hash)
+            rec = s.execute(stmt).scalars().first()
+            if rec:
+                return True
+    except Exception:
+        pass
     return False
 
 

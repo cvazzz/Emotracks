@@ -38,6 +38,61 @@ def _extract_duration_seconds(path: str) -> float | None:
     return None
 
 
+@celery_app.task(name="transcribe.audio")
+def transcribe_audio_task(payload: dict) -> dict:
+    """Tarea dedicada para transcripción de audio."""
+    audio_path = payload.get("audio_path")
+    response_id = payload.get("response_id")
+    
+    if not audio_path or not os.path.isfile(audio_path):
+        return {"error": "audio_file_not_found"}
+    
+    start_time = datetime.now().timestamp()
+    
+    try:
+        TRANSCRIPTION_REQUESTS.labels("attempt").inc()
+        transcript = transcribir_audio(audio_path)
+        
+        if transcript:
+            # Actualizar response con transcript
+            if response_id:
+                try:
+                    with session_scope() as s:
+                        row = s.get(Response, response_id)
+                        if row and row.analysis_json:
+                            analysis = row.analysis_json.copy()
+                            analysis["transcript"] = transcript
+                            row.analysis_json = analysis
+                            if not row.transcript or row.transcript == "<audio_pending_transcription>":
+                                row.transcript = transcript
+                            s.add(row)
+                except Exception:
+                    pass
+            
+            try:
+                TRANSCRIPTION_REQUESTS.labels("success").inc()
+                TRANSCRIPTION_LATENCY.labels("success").observe(datetime.now().timestamp() - start_time)
+            except Exception:
+                pass
+            
+            return {"transcript": transcript, "status": "success"}
+        else:
+            try:
+                TRANSCRIPTION_REQUESTS.labels("failed").inc()
+                TRANSCRIPTION_LATENCY.labels("failed").observe(datetime.now().timestamp() - start_time)
+            except Exception:
+                pass
+            return {"error": "transcription_failed"}
+            
+    except Exception as e:
+        try:
+            TRANSCRIPTION_REQUESTS.labels("error").inc()
+            TRANSCRIPTION_LATENCY.labels("error").observe(datetime.now().timestamp() - start_time)
+        except Exception:
+            pass
+        return {"error": str(e)}
+
+
 @celery_app.task(name="analyze.text")
 def analyze_text_task(payload: dict) -> dict:
     """Tarea simulada de análisis de texto (mock)."""
@@ -55,29 +110,14 @@ def analyze_text_task(payload: dict) -> dict:
             pass
     transcript_added = False
     if normalized_path and settings.enable_transcription:
-        start_tx = None
+        # Enviar a cola separada de transcripción (no bloquear análisis principal)
         try:
-            start_tx = datetime.now().timestamp()
-            TRANSCRIPTION_REQUESTS.labels("attempt").inc()
+            transcribe_audio_task.delay({
+                "audio_path": normalized_path,
+                "response_id": payload.get("response_id")
+            })
         except Exception:
             pass
-        tx = transcribir_audio(normalized_path)
-        if tx:
-            result_transcript = tx
-            transcript_added = True
-            if start_tx:
-                try:
-                    TRANSCRIPTION_REQUESTS.labels("success").inc()
-                    TRANSCRIPTION_LATENCY.labels("success").observe(datetime.now().timestamp() - start_tx)
-                except Exception:
-                    pass
-        else:
-            if start_tx:
-                try:
-                    TRANSCRIPTION_REQUESTS.labels("failed").inc()
-                    TRANSCRIPTION_LATENCY.labels("failed").observe(datetime.now().timestamp() - start_tx)
-                except Exception:
-                    pass
     response_id = payload.get("response_id")
     payload_child_id = payload.get("child_id")
     # Allow forcing intensity (test support) else mock default 0.2 / 0.9 for high text tokens
@@ -115,12 +155,9 @@ def analyze_text_task(payload: dict) -> dict:
                 "model_version": "mock-worker-fallback-exc",
                 "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             }
-    # Placeholder: si audio_path y no transcript, mantener campo para futura transcripción
+    # Mantener placeholder si no hay transcript inmediato
     if audio_path and not result.get("transcript"):
-        if transcript_added:
-            result["transcript"] = result_transcript  # type: ignore[name-defined]
-        else:
-            result["transcript"] = "<audio_pending_transcription>"
+        result["transcript"] = "<audio_pending_transcription>"
     if audio_duration is not None or audio_features_extra:
         af = result.get("audio_features") or {}
         if audio_duration is not None:

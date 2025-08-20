@@ -40,6 +40,11 @@ class Response(SQLModel, table=True):
     status: ResponseStatus = Field(default=ResponseStatus.QUEUED)
     analysis_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     child_id: Optional[int] = Field(default=None, foreign_key="child.id", index=True)
+    # Audio pipeline metadata
+    audio_path: Optional[str] = Field(default=None, index=True)
+    audio_format: Optional[str] = None
+    audio_duration_sec: Optional[float] = None
+    transcript: Optional[str] = None
 
 
 class Child(SQLModel, table=True):
@@ -60,3 +65,18 @@ class Alert(SQLModel, table=True):
     severity: str = Field(default="info")  # info | warning | critical
     rule_version: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RevokedToken(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    jti_hash: str = Field(index=True, unique=True)
+    token_type: str = Field(default="refresh")
+    revoked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: Optional[datetime] = Field(default=None, index=True)
+
+
+class AppConfig(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    key: str = Field(index=True, unique=True)
+    value: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

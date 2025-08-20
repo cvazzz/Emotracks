@@ -17,7 +17,10 @@ from sqlmodel import select
 from sqlmodel import Session
 
 from .models import Alert, Response
+from .metrics import ALERTS_TOTAL_BY_TYPE
 from .settings import settings
+from .models import AppConfig
+from sqlmodel import select
 
 RULE_VERSION_V2 = "v2"
 DEDUP_WINDOW_MINUTES = 10
@@ -45,24 +48,27 @@ def _recent_alert_exists(session: Session, child_id: int, alert_type: str, rule_
     return existing_id is not None
 
 
+def _load_severity_overrides(session: Session) -> dict:
+    if not settings.dynamic_config_enabled:
+        return {}
+    rows = list(session.exec(select(AppConfig).where(AppConfig.key.like("alert_severity_%"))))
+    return {r.key: r.value for r in rows}
+
+
 def evaluate_rules_v2(session: Session, child_id: int, new_response: Response, analysis: dict) -> List[Alert]:
     created: List[Alert] = []
     intensity = float(analysis.get("intensity") or 0.0)
     primary = (analysis.get("primary_emotion") or "Unknown").strip() or "Unknown"
+    sev_over = _load_severity_overrides(session)
+    sev_intensity_high = sev_over.get("alert_severity_intensity_high", "critical")
+    sev_emotion_streak = sev_over.get("alert_severity_emotion_streak", "warning")
+    sev_avg_intensity_high = sev_over.get("alert_severity_avg_intensity_high", "warning")
 
     # Rule 1: intensity_high
     if intensity >= settings.alert_intensity_high_threshold and not _recent_alert_exists(
         session, child_id, "intensity_high", RULE_VERSION_V2
     ):
-        created.append(
-            Alert(
-                child_id=child_id,
-                type="intensity_high",
-                message=f"Intensidad alta detectada ({intensity:.2f})",
-                severity="critical",
-                rule_version=RULE_VERSION_V2,
-            )
-        )
+        created.append(Alert(child_id=child_id, type="intensity_high", message=f"Intensidad alta detectada ({intensity:.2f})", severity=sev_intensity_high, rule_version=RULE_VERSION_V2))
 
     # Obtain last up-to 50 responses then slice last 5
     created_col = getattr(Response, "created_at")
@@ -79,15 +85,7 @@ def evaluate_rules_v2(session: Session, child_id: int, new_response: Response, a
         and primary.lower() not in {"neutral", "none", "unknown"}
         and not _recent_alert_exists(session, child_id, "emotion_streak", RULE_VERSION_V2)
     ):
-        created.append(
-            Alert(
-                child_id=child_id,
-                type="emotion_streak",
-                message=f"3 respuestas consecutivas con emoción {primary}",
-                severity="warning",
-                rule_version=RULE_VERSION_V2,
-            )
-        )
+        created.append(Alert(child_id=child_id, type="emotion_streak", message=f"3 respuestas consecutivas con emoción {primary}", severity=sev_emotion_streak, rule_version=RULE_VERSION_V2))
 
     # Rule 3: avg_intensity_high (average last 5 >= 0.7)
     required_avg_n = settings.alert_avg_intensity_count
@@ -98,18 +96,14 @@ def evaluate_rules_v2(session: Session, child_id: int, new_response: Response, a
         if avg_intensity >= settings.alert_avg_intensity_threshold and not _recent_alert_exists(
             session, child_id, "avg_intensity_high", RULE_VERSION_V2
         ):
-            created.append(
-                Alert(
-                    child_id=child_id,
-                    type="avg_intensity_high",
-                    message=f"Promedio de intensidad alto en últimas 5 respuestas ({avg_intensity:.2f})",
-                    severity="warning",
-                    rule_version=RULE_VERSION_V2,
-                )
-            )
+            created.append(Alert(child_id=child_id, type="avg_intensity_high", message=f"Promedio de intensidad alto en últimas 5 respuestas ({avg_intensity:.2f})", severity=sev_avg_intensity_high, rule_version=RULE_VERSION_V2))
 
     for a in created:
         session.add(a)
+        try:
+            ALERTS_TOTAL_BY_TYPE.labels(a.type, a.severity).inc()
+        except Exception:
+            pass
     if created:
         try:
             session.flush()

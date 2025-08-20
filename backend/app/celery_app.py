@@ -31,6 +31,11 @@ celery_app.conf.update(
     result_serializer="json",
     task_time_limit=60,
     worker_max_tasks_per_child=100,
+    # Definir rutas de cola para separar transcripción de análisis regular
+    task_routes={
+        'transcribe.audio': {'queue': 'transcription'},
+        'analyze.text': {'queue': 'analysis'},
+    },
 )
 
 try:  # Registrar tareas
