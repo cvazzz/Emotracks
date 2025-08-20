@@ -45,6 +45,7 @@ def _do_http_json(url: str, method: str, headers: dict, body: dict | None, timeo
 
 
 def _mock_analysis(text: str) -> dict:
+    # Base mínima; el resto de campos se rellenan en _ensure_contract
     return {
         "primary_emotion": "Mixto" if text.strip() else "Neutral",
         "intensity": 0.2,
@@ -59,12 +60,61 @@ def _mock_analysis(text: str) -> dict:
     }
 
 
+CONTRACT_DEFAULTS: dict[str, Any] = {
+    "secondary_emotions": [],
+    "context_tags": [],
+    "emoji_concordance": None,  # Se puede calcular comparando emoji usuario vs primary_emotion
+    "hypothesis_trigger": None,
+    "recommended_action": None,
+}
+
+
+def _ensure_contract(analysis: dict) -> dict:
+    """Garantiza que el dict cumpla el contrato EmotionalAnalysis extendido.
+
+    No elimina claves existentes; solo añade las que falten con defaults y adapta
+    nomenclatura (por ejemplo duration_sec -> duration_s duplicado para compat).
+    """
+    a = analysis.copy()
+    # Añadir defaults de alto nivel
+    for k, v in CONTRACT_DEFAULTS.items():
+        a.setdefault(k, v)
+
+    # tone_features placeholder si None
+    if a.get("tone_features") is None:
+        a["tone_features"] = {
+            "pitch_mean_hz": None,
+            "pitch_std_hz": None,
+            "speech_rate_wpm": None,
+            "voice_intensity_db": None,
+            "voice_emotion_probabilities": {},
+        }
+    else:
+        tf = a["tone_features"] or {}
+        tf.setdefault("pitch_mean_hz", None)
+        tf.setdefault("pitch_std_hz", None)
+        tf.setdefault("speech_rate_wpm", None)
+        tf.setdefault("voice_intensity_db", None)
+        tf.setdefault("voice_emotion_probabilities", {})
+        a["tone_features"] = tf
+
+    # audio_features: duplicar duration_sec a duration_s si aplica
+    if a.get("audio_features"):
+        af = a["audio_features"]
+        if isinstance(af, dict):
+            if "duration_sec" in af and "duration_s" not in af:
+                af["duration_s"] = af.get("duration_sec")
+            a["audio_features"] = af
+    return a
+
+
 def analyze_text(text: str, audio_features: dict = None) -> dict:
     if not settings.grok_enabled or not settings.grok_api_key:
         fb = _mock_analysis(text)
         # Incorporar features de audio en análisis mock si están disponibles
         if audio_features:
             fb = _enrich_with_audio_features(fb, audio_features)
+        fb = _ensure_contract(fb)
         try:
             GROK_REQUESTS.labels("disabled").inc()
             GROK_FALLBACKS.labels("disabled").inc()
@@ -106,6 +156,7 @@ def analyze_text(text: str, audio_features: dict = None) -> dict:
                     "model_version": f"grok:{settings.grok_model}",
                     "analysis_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
+                result = _ensure_contract(result)
                 try:
                     GROK_REQUESTS.labels("ok").inc()
                     GROK_REQUEST_LATENCY.labels("ok").observe(time.time() - start_time)
@@ -130,6 +181,7 @@ def analyze_text(text: str, audio_features: dict = None) -> dict:
     # Incorporar features de audio en fallback también
     if audio_features:
         fb = _enrich_with_audio_features(fb, audio_features)
+    fb = _ensure_contract(fb)
     try:
         GROK_REQUESTS.labels("fallback").inc()
         GROK_FALLBACKS.labels(last_error or "unknown").inc()
@@ -159,16 +211,22 @@ def _enrich_with_audio_features(analysis: dict, audio_features: dict) -> dict:
 
 
 def _audio_features_to_tone(audio_features: dict) -> dict:
-    """Convierte features de audio a estructura tone_features."""
+    """Convierte features de audio a estructura tone_features con placeholders completos."""
     if not audio_features:
-        return {}
-    
+        return {
+            "pitch_mean_hz": None,
+            "pitch_std_hz": None,
+            "speech_rate_wpm": None,
+            "voice_intensity_db": None,
+            "voice_emotion_probabilities": {},
+        }
     return {
         "pitch_mean_hz": audio_features.get("pitch_mean_hz"),
         "pitch_std_hz": audio_features.get("pitch_std_hz"),
-        "speech_rate_wpm": None,  # TODO: calcular desde pausas
+        "speech_rate_wpm": None,  # TODO futuro: derivar de palabras / duración
         "voice_intensity_db": audio_features.get("energy_mean_db"),
+        "voice_emotion_probabilities": audio_features.get("voice_emotion_probabilities", {}),
     }
 
 
-__all__ = ["analyze_text", "GrokClientError"]
+__all__ = ["analyze_text", "GrokClientError", "_ensure_contract"]

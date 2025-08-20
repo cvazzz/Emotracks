@@ -153,7 +153,8 @@ Editar
     "voice_emotion_probabilities": {"sad": 0.8, "neutral": 0.2}
   },
   "audio_features": {
-    "duration_s": 3.4,
+    "duration_sec": 3.4,
+    "duration_s": 3.4, // alias para compatibilidad
     "sample_rate": 16000,
     "silence_ratio": 0.12,
     "mfcc_mean": [ ... ]

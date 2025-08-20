@@ -7,7 +7,7 @@ from celery.result import AsyncResult
 from .celery_app import celery_app
 from .db import session_scope
 from .models import Response, ResponseStatus
-from .grok_client import analyze_text as grok_analyze
+from .grok_client import analyze_text as grok_analyze, _ensure_contract
 from .alert_rules import evaluate_auto_alerts
 from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
@@ -158,6 +158,8 @@ def analyze_text_task(payload: dict) -> dict:
                 "model_version": "mock-worker-fallback-exc",
                 "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             }
+    # Normalizar contrato (rellenar campos faltantes)
+    result = _ensure_contract(result)
     # Mantener placeholder si no hay transcript inmediato
     if audio_path and not result.get("transcript"):
         result["transcript"] = "<audio_pending_transcription>"
