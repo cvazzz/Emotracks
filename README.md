@@ -195,6 +195,10 @@ RATE_LIMIT_BURST=20
  +ENABLE_AUDIO_FEATURES=1
  +TRANSCRIPTION_MODEL=base
  +FFMPEG_PATH=ffmpeg
+ENABLE_ENCRYPTION=0
+# ENCRYPTION_KEY debe ser una clave Fernet base64 (opcional si ENABLE_ENCRYPTION=1)
+# Generar ejemplo en Python:
+# from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())
 ```
 
 ## Roadmap completado ✅
@@ -214,5 +218,45 @@ RATE_LIMIT_BURST=20
 - [ ] API de estadísticas de uso de audio/transcripción.
 - [ ] Soporte para video (extracción de audio).
 - [ ] Modelos Whisper especializados por edad/contexto.
+
+## Flujo asíncrono y eventos (guía rápida)
+
+- Enviar respuesta: POST /api/submit-responses → 202 { task_id, response_id }.
+- Polling: GET /api/response-status/{task_id} → { celery_status, status, progress, phase, analysis? }.
+- Listado de tareas: GET /api/tasks/recent?child_id=ID.
+- WebSocket: conectar a /ws y escuchar canal `emotrack:updates`.
+
+Eventos emitidos:
+- task_queued {task_id, response_id, status}
+- analysis_started {response_id}
+- transcription_queued {response_id}
+- transcription_ready {response_id, status}
+- task_completed {response_id, status, emotion}
+- alert_created {alert: {...}}
+
+Fases de progreso: QUEUED(0), ANALYSIS_RUNNING(30), FEATURES_EXTRACTED(70), TRANSCRIPTION_QUEUED(85), DONE(100).
+
+Tips:
+- Si Redis no está disponible, el WebSocket envía un warning y sigue operativo sin eventos push.
+- El backend persiste task_id en `responses.task_id` para correlación sencilla.
+
+## Docker Compose (arranque rápido y troubleshooting)
+
+Arrancar:
+
+```
+docker compose up --build
+```
+
+Acceso rápido:
+- API: http://localhost:8000/health
+
+Si el contenedor de la API se apaga solo:
+- Revisa logs: `docker compose logs api`
+- Asegúrate de que la base de datos esté lista: `docker compose logs db` (espera a "database system is ready to accept connections")
+- Variables por defecto en `docker-compose.yml`:
+  - `REDIS_URL` → `redis://redis:6379/0`
+  - `DATABASE_URL` → `postgresql+psycopg://postgres:postgres@db:5432/emotrack`
+- La API reintenta la inicialización de DB varias veces antes de fallar. Si falla, vuelve a intentar `docker compose up` cuando `db` esté listo.
 
 

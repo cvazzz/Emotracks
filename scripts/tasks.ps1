@@ -23,14 +23,15 @@ switch ($Task) {
   'lint' { ruff check . }
   'format' { black . }
   'test' { pytest -q }
-  'openapi' {
-    python -c "import json, pathlib; from backend.app.main import app; pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2)); print('openapi.json generado')"
+    'openapi' {
+      python -c "import json, pathlib; from backend.app.main import app; pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2)); print('openapi.json generado')"
+    }
+    'coverage' { pytest --cov=backend.app --cov-report=term-missing }
+    'clean' {
+      if (Test-Path openapi.json) { Remove-Item openapi.json }
+      if (Test-Path test.db) { Remove-Item test.db }
+      Get-ChildItem -Recurse -Directory -Filter __pycache__ | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+    }
+    Default { Show-Help }
   }
-  'coverage' { pytest --cov=backend.app --cov-report=term-missing }
-  'clean' {
-    if (Test-Path openapi.json) { Remove-Item openapi.json }
-    if (Test-Path test.db) { Remove-Item test.db }
-    Get-ChildItem -Recurse -Directory -Filter __pycache__ | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-  }
-  Default { Show-Help }
-}
+

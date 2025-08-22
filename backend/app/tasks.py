@@ -18,6 +18,7 @@ from .metrics import TRANSCRIPTION_REQUESTS, TRANSCRIPTION_LATENCY
 import os
 import wave
 import contextlib
+from .crypto_utils import encrypt_text
 
 
 def _extract_duration_seconds(path: str) -> float | None:
@@ -63,9 +64,17 @@ def transcribe_audio_task(payload: dict) -> dict:
                         if row and row.analysis_json:
                             analysis = row.analysis_json.copy()
                             analysis["transcript"] = transcript
-                            row.analysis_json = analysis
-                            if not row.transcript or row.transcript == "<audio_pending_transcription>":
-                                row.transcript = transcript
+                            # Optional encryption path
+                            if settings.enable_encryption:
+                                row.analysis_json = None
+                                row.analysis_json_enc = encrypt_text(json.dumps(analysis))
+                                if not row.transcript or row.transcript == "<audio_pending_transcription>":
+                                    row.transcript = None
+                                    row.transcript_enc = encrypt_text(transcript)
+                            else:
+                                row.analysis_json = analysis
+                                if not row.transcript or row.transcript == "<audio_pending_transcription>":
+                                    row.transcript = transcript
                             s.add(row)
                 except Exception:
                     pass
@@ -185,7 +194,23 @@ def analyze_text_task(payload: dict) -> dict:
                 if row is not None:
                     row.emotion = result["primary_emotion"]
                     row.status = ResponseStatus.COMPLETED
-                    row.analysis_json = result
+                    # Optional encryption for analysis_json and transcript
+                    try:
+                        if settings.enable_encryption:
+                            row.analysis_json = None
+                            row.analysis_json_enc = encrypt_text(json.dumps(result))
+                            if result.get("transcript"):
+                                row.transcript = None
+                                row.transcript_enc = encrypt_text(result.get("transcript"))
+                        else:
+                            row.analysis_json = result
+                            if result.get("transcript"):
+                                row.transcript = result.get("transcript")
+                    except Exception:
+                        # Fallback to plaintext if encryption fails
+                        row.analysis_json = result
+                        if result.get("transcript"):
+                            row.transcript = result.get("transcript")
                     # Guardar duración en columna si se obtuvo
                     if audio_duration is not None:
                         try:

@@ -19,3 +19,4 @@ prometheus-client==0.21.0
 faster-whisper==1.0.3  # opcional: transcripción (instalar ffmpeg en sistema)
 librosa==0.10.1  # opcional: análisis prosódico avanzado
 soundfile==0.12.1  # requerido por librosa para cargar audio
+cryptography==43.0.1  # opcional: cifrado en reposo

@@ -74,3 +74,39 @@ class AlertOut(BaseModel):
 
 class AlertsList(BaseModel):
     items: List[AlertOut]
+
+
+class PsychologistCreate(BaseModel):
+    name: str
+    email: EmailStr
+    docs_url: Optional[str] = None
+
+
+class PsychologistOut(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    verified: bool
+    docs_url: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PsychologistsList(BaseModel):
+    items: List[PsychologistOut]
+
+
+class RecommendationOut(BaseModel):
+    child_id: int
+    items: List[str]
+
+
+class ConsentCreate(BaseModel):
+    parent_id: int
+    child_id: int
+
+
+class ConsentOut(BaseModel):
+    parent_id: int
+    child_id: int
+    granted_at: str | None = None

@@ -31,6 +31,18 @@ def _isolate_db() -> Iterator[None]:
         except Exception:
             pass
         try:
+            conn.execute(text("DELETE FROM alert"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("DELETE FROM consent"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("DELETE FROM psychologist"))
+        except Exception:
+            pass
+        try:
             conn.execute(text("DELETE FROM child"))
         except Exception:
             pass

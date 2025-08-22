@@ -326,6 +326,16 @@ Cifrado en tránsito: HTTPS/TLS (Let's Encrypt para VPS).
 
 Cifrado en reposo: PostgreSQL TDE opcional o cifrado de columnas sensibles (pgcrypto); SQLite con SQLCipher en local-dev.
 
+Estado actual (implementación MVP)
+- Rate limiting básico por usuario/IP con Redis (si disponible) o memoria (fallback).
+- Redacción de PII (emails y teléfonos) en logs si está activado.
+- Consentimiento: endpoint POST /api/consent con (parent_id, child_id). En /api/submit-responses se exige consentimiento cuando se pasan parent_id y child_id; si parent_id no es numérico o no existe consentimiento, responde 403 consent_required.
+- Auth: JWT con refresh y revocación persistente (tabla revokedtoken). Logout revoca el refresh.
+- Cifrado en reposo (opcional y transparente para el cliente):
+  - Cuando ENABLE_ENCRYPTION=1 y ENCRYPTION_KEY (Fernet) está definido, el backend almacena analysis_json y transcript cifrados en columnas binarias (analysis_json_enc, transcript_enc) y devuelve valores descifrados en las APIs.
+  - Por compatibilidad, si el cifrado está desactivado, se guarda en texto/JSON como antes.
+  - Requiere migración en Postgres (Alembic) para añadir columnas; en SQLite de dev se parchea automáticamente.
+
 Retención y borrado: endpoints para exportar/borrar datos personales (GDPR Right to Erasure).
 
 Moderación: pipeline para detectar contenido preocupante; alertas y flujo de revisión humana.
@@ -361,6 +371,12 @@ Producción: desplegar en VPS; opción usar docker-compose o Kubernetes (manifie
 CI/CD: GitHub Actions que: run tests, build backend image, build Flutter web, run linters, produce artifacts. Opcional: push a registry privado.
 
 Rollback: versionado semántico y tags en git.
+
+Variables de entorno clave (añadidos recientes)
+- ENABLE_ENCRYPTION=0|1 → activa el cifrado de columnas sensibles (analysis_json, transcript).
+- ENCRYPTION_KEY=<clave_fernet> → clave base64 generada con Fernet.generate_key(). Ejemplo (Python):
+  - from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())
+- PII_REDACTION_ENABLED=0|1 → controla la redacción básica de PII en logs.
 
 Pruebas y QA
 Backend: pytest, pruebas unitarias, mocks para grok_client, tests de integración con DB en memoria.
@@ -466,3 +482,20 @@ Pruebas de seguridad básicas (scans de dependencias, linters, SAST básico).
 Documentar claramente las limitaciones del análisis IA y dejar logs/metadata que permiten auditar decisiones del modelo (model_version, confidence, timestamp).
 
 Antes de despliegue a usuarios reales, revisar con asesoría legal las políticas de privacidad y cumplimiento local (COPPA/GDPR).
+
+Anexo — Endpoints implementados (MVP actual)
+- Auth: POST /api/auth/register, POST /api/auth/login, POST /api/auth/refresh, POST /api/auth/logout, GET /api/auth/me.
+- Respuestas: POST /api/submit-responses (202, async) y GET /api/response-status/{task_id} con {celery_status, status, progress, phase, analysis?}.
+- Tareas: GET /api/tasks/recent (listado con progreso) y GET /api/responses, GET /api/responses/{id}.
+- Children: POST /api/children, GET /api/children, GET /api/children/{id}, PATCH /api/children/{id}, DELETE /api/children/{id}, POST /api/children/{id}/responses (crea y encola), POST /api/children/{id}/attach-responses.
+- Psychologists: POST /api/psychologists (admin), GET /api/psychologists (filtro verified opcional), POST /api/admin/psychologists/{id}/verify.
+- Consent: POST /api/consent.
+- Alerts: POST /api/alerts, GET /api/alerts?child_id=, DELETE /api/alerts/{id}.
+- Recomendaciones: GET /api/recommendations/{child_id}.
+- Realtime: WS /ws (Redis Pub/Sub si disponible; fallback eco si no).
+
+Diferencias vs. plan original (para alinear UI y QA)
+- Psychologists register: por ahora lo crea un admin vía POST /api/psychologists (JSON). El flujo con subida de documentos multipart queda para la fase de verificación documental.
+- Alerts list: en lugar de GET /api/alerts/{child_id} se usa GET /api/alerts?child_id=.
+- Children listing: los endpoints no llevan parent_id en la ruta; el parent se infiere del token.
+- Cifrado en reposo: implementado a nivel de columnas con Fernet (flag-enable), además de las opciones de TDE/SQLCipher mencionadas para prod/local respectivamente.

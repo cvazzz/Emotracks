@@ -7,27 +7,29 @@ services:
     ports:
       - "8000:8000"
     environment:
-      REDIS_URL: ${REDIS_URL}
-      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/emotrack}
       LOG_LEVEL: INFO
-      STATIC_DIR: ${STATIC_DIR}
+      STATIC_DIR: ${STATIC_DIR:-}
     volumes:
       - ./:/app
     depends_on:
       - redis
       - db
+    restart: unless-stopped
 
   worker:
     build: .
     command: celery -A backend.app.celery_app.celery_app worker -l info
     environment:
-      REDIS_URL: ${REDIS_URL}
-      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/emotrack}
       LOG_LEVEL: INFO
     volumes:
       - ./:/app
     depends_on:
       - redis
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine

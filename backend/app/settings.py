@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Limpieza automática
     audio_cleanup_days: int = int(os.getenv("AUDIO_CLEANUP_DAYS", "7"))  # días antes de limpiar archivos
     enable_audio_compression: bool = os.getenv("ENABLE_AUDIO_COMPRESSION", "0") in {"1", "true", "True"}
+    # Cifrado en reposo (opcional)
+    enable_encryption: bool = os.getenv("ENABLE_ENCRYPTION", "0") in {"1", "true", "True"}
+    encryption_key: str | None = os.getenv("ENCRYPTION_KEY")
+    # Cifrado en reposo
+    enable_encryption: bool = os.getenv("ENABLE_ENCRYPTION", "0") in {"1", "true", "True"}
+    encryption_key: str | None = os.getenv("ENCRYPTION_KEY")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

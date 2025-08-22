@@ -18,7 +18,7 @@ _initialized = False
 
 def init_db() -> None:
     last_err = None
-    for _ in range(10):
+    for _ in range(30):
         try:
             SQLModel.metadata.create_all(engine)
             # Ensure SQLite has new columns (lightweight shim for tests/dev)
@@ -99,6 +99,18 @@ def _ensure_sqlite_columns() -> None:
                         conn.execute(text(f"ALTER TABLE response ADD COLUMN {col_name} {col_type}"))
                 except Exception:
                     pass
+        # Encrypted columns (optional)
+        enc_columns = [
+            ("analysis_json_enc", "BLOB"),
+            ("transcript_enc", "BLOB"),
+        ]
+        for col_name, col_type in enc_columns:
+            if col_name not in cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE response ADD COLUMN {col_name} {col_type}"))
+                except Exception:
+                    pass
         # Best-effort index for audio_path
         try:
             with engine.begin() as conn:
@@ -151,6 +163,35 @@ def _ensure_sqlite_columns() -> None:
                                 pass
                 except Exception:
                     pass
+        # Create psychologist table if not exists
+        if "psychologist" not in insp.get_table_names():
+            with engine.begin() as conn:
+                conn.execute(text("""
+                CREATE TABLE psychologist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    verified BOOLEAN DEFAULT 0,
+                    docs_url TEXT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """))
+                try:
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_psychologist_verified ON psychologist(verified)"))
+                except Exception:
+                    pass
+        # Create consent table if not exists
+        if "consent" not in insp.get_table_names():
+            with engine.begin() as conn:
+                conn.execute(text("""
+                CREATE TABLE consent (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    parent_id INTEGER NOT NULL,
+                    child_id INTEGER NOT NULL,
+                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(parent_id, child_id)
+                )
+                """))
     except Exception:
         # Best-effort; ignore if not applicable
         pass

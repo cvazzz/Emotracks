@@ -20,7 +20,7 @@ from sqlmodel import select
 
 from .db import get_session, init_db
 from .logging_setup import configure_logging
-from .models import Response, UserRole, ResponseStatus, Child
+from .models import Response, UserRole, ResponseStatus, Child, Psychologist, Consent
 from sqlalchemy.exc import IntegrityError
 from .settings import settings
 from .tasks import enqueue_analysis_task, get_task_status
@@ -46,6 +46,12 @@ from .schemas import (
     AlertCreate,
     AlertOut,
     AlertsList,
+    PsychologistCreate,
+    PsychologistOut,
+    PsychologistsList,
+    RecommendationOut,
+    ConsentCreate,
+    ConsentOut,
 )
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from .metrics import REQUEST_COUNT, REQUEST_LATENCY, REQUEST_ERRORS, RATE_LIMIT_HITS
@@ -55,6 +61,7 @@ from .alert_rules import RULE_VERSION_V2
 from .alert_rules import evaluate_auto_alerts
 from .models import AppConfig
 from .events import publish_event, CHANNEL as EVENTS_CHANNEL
+from .crypto_utils import decrypt_text
 
 logger = structlog.get_logger()
 
@@ -225,6 +232,34 @@ def _compute_progress(response_obj: Response | None, celery_status: str) -> tupl
     if celery_status == "STARTED":
         return 30, "ANALYSIS_RUNNING"
     return 0, "UNKNOWN"
+
+
+def _load_analysis_for_api(r: Response) -> dict | None:
+    # Prefer plaintext JSON if present
+    if r.analysis_json:
+        analysis = r.analysis_json
+    else:
+        # If encrypted blob present, try to decode as utf-8 json
+        if getattr(r, "analysis_json_enc", None):
+            try:
+                raw = decrypt_text(r.analysis_json_enc)
+                if raw:
+                    analysis = json.loads(raw)
+                else:
+                    analysis = None
+            except Exception:
+                analysis = None
+        else:
+            analysis = None
+    # Ensure transcript plaintext if only encrypted exists
+    if analysis is not None and analysis.get("transcript") in (None, "") and getattr(r, "transcript_enc", None):
+        try:
+            t = decrypt_text(r.transcript_enc)
+            if t:
+                analysis["transcript"] = t
+        except Exception:
+            pass
+    return analysis
 
 
 # Models (subset aligned with intructions.txt)
@@ -492,6 +527,21 @@ async def submit_responses(
     audio_file: Optional[UploadFile] = File(None),
     session=Depends(get_session),
 ):
+    # Consent check si parent_id y child_id disponibles
+    if settings.dynamic_config_enabled and parent_id and child_id and child_id.isdigit():
+        try:
+            # parent_id debe ser numérico para validar consentimiento
+            if not str(parent_id).isdigit():
+                raise HTTPException(status_code=403, detail="consent_required")
+            has = session.exec(
+                select(Consent).where(Consent.parent_id == int(parent_id), Consent.child_id == int(child_id))
+            ).first()
+            if not has:
+                raise HTTPException(status_code=403, detail="consent_required")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     # Minimal: persist file later; for now, enqueue text for analysis
     audio_path = None
     if audio_file is not None:
@@ -571,8 +621,10 @@ async def response_status(task_id: str, session=Depends(get_session)):
     if r:
         payload["response_id"] = r.id
         payload["db_status"] = r.status
-        if r.status == ResponseStatus.COMPLETED and r.analysis_json:
-            payload["analysis"] = r.analysis_json
+        if r.status == ResponseStatus.COMPLETED:
+            analysis = _load_analysis_for_api(r)
+            if analysis is not None:
+                payload["analysis"] = analysis
     return payload
 
 
@@ -634,7 +686,7 @@ async def get_response(response_id: int, session=Depends(get_session)):
         "emotion": r.emotion,
         "status": r.status,
         "created_at": r.created_at.isoformat(),
-        "analysis_json": r.analysis_json,
+        "analysis_json": _load_analysis_for_api(r),
     }
 
 
@@ -669,6 +721,80 @@ async def dashboard(child_ref: str, session=Depends(get_session), user=Depends(r
         "by_emotion": by_emotion,
         "series_by_day": series_by_day,
     }
+
+
+# ---- Psychologists ----
+@app.post("/api/psychologists", response_model=PsychologistOut, status_code=201)
+def create_psychologist(payload: PsychologistCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    p = Psychologist(name=payload.name, email=str(payload.email), docs_url=payload.docs_url or None)
+    session.add(p)
+    session.flush()
+    assert p.id is not None
+    return PsychologistOut.model_validate(p)
+
+
+@app.get("/api/psychologists", response_model=PsychologistsList)
+def list_psychologists(verified: Optional[bool] = None, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
+    stmt = select(Psychologist)
+    if verified is not None:
+        stmt = stmt.where(Psychologist.verified == bool(verified))
+    items = list(session.exec(stmt))
+    return {"items": [PsychologistOut.model_validate(i) for i in items]}
+
+
+@app.post("/api/admin/psychologists/{pid}/verify", response_model=PsychologistOut)
+def verify_psychologist(pid: int, session=Depends(get_session), user=Depends(require_roles(UserRole.ADMIN))):
+    p = session.get(Psychologist, pid)
+    if not p:
+        raise HTTPException(status_code=404, detail="not_found")
+    p.verified = True
+    session.add(p)
+    session.flush()
+    return PsychologistOut.model_validate(p)
+
+
+# ---- Recommendations ----
+@app.get("/api/recommendations/{child_id}", response_model=RecommendationOut)
+def get_recommendations(child_id: int, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN, UserRole.PSYCHOLOGIST))):
+    # Basado en alertas recientes + emoción dominante
+    alerts = list(session.exec(select(Alert).where(Alert.child_id == child_id).order_by(desc(Alert.created_at)).limit(10)))
+    msgs = []
+    for a in alerts[:3]:
+        if a.severity == "critical":
+            msgs.append("Contactar a un profesional verificado y acompañar al menor inmediatamente.")
+        elif a.severity == "warning":
+            msgs.append("Practicar respiración guiada y validar emociones con un adulto.")
+    # Emotion dominant fallback
+    rows = list(session.exec(select(Response).where(Response.child_id == child_id).order_by(desc(Response.created_at)).limit(20)))
+    counts: dict[str, int] = {}
+    for r in rows:
+        e = r.emotion or "Neutral"
+        counts[e] = counts.get(e, 0) + 1
+    if counts:
+        dom = max(counts, key=counts.get)
+        if dom == "Triste":
+            msgs.append("Actividad lúdica tranquila (dibujo, música suave) con acompañamiento.")
+        elif dom == "Enojado":
+            msgs.append("5 ciclos de respiración profunda contando 4-4-6.")
+        elif dom == "Ansioso":
+            msgs.append("Pausa guiada con cuento breve y respiración.")
+        else:
+            msgs.append("Refuerzo positivo y tiempo de calidad.")
+    if not msgs:
+        msgs = ["Escucha activa y validar emociones del menor."]
+    return {"child_id": child_id, "items": list(dict.fromkeys(msgs))}
+
+
+# ---- Consent ----
+@app.post("/api/consent", response_model=ConsentOut, status_code=201)
+def grant_consent(payload: ConsentCreate, session=Depends(get_session), user=Depends(require_roles(UserRole.PARENT, UserRole.ADMIN))):
+    existing = session.exec(select(Consent).where(Consent.parent_id == payload.parent_id, Consent.child_id == payload.child_id)).first()
+    if existing:
+        return {"parent_id": existing.parent_id, "child_id": existing.child_id, "granted_at": existing.granted_at.isoformat()}
+    c = Consent(parent_id=payload.parent_id, child_id=payload.child_id)
+    session.add(c)
+    session.flush()
+    return {"parent_id": c.parent_id, "child_id": c.child_id, "granted_at": c.granted_at.isoformat()}
 
 
 # ---- Children CRUD ----

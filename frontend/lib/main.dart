@@ -9,12 +9,16 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-final apiBaseProvider = Provider<String>((ref) => const String.fromEnvironment('API_BASE', defaultValue: 'http://localhost:8000'));
+final apiBaseProvider = Provider<String>((ref) => const String.fromEnvironment(
+    'API_BASE',
+    defaultValue: 'http://localhost:8000'));
 
 final wsProvider = StateProvider<WebSocketChannel?>((ref) => null);
 
-final responsesProvider = StateProvider<List<Map<String, dynamic>>>((ref) => []);
-final submitStateProvider = StateProvider<String?>((ref) => null); // vacio-nulo| en cola | completado
+final responsesProvider =
+    StateProvider<List<Map<String, dynamic>>>((ref) => []);
+final submitStateProvider =
+    StateProvider<String?>((ref) => null); // vacio-nulo| en cola | completado
 final lastResponseIdProvider = StateProvider<int?>((ref) => null);
 
 Future<List<Map<String, dynamic>>> fetchResponses(String base) async {
@@ -81,25 +85,19 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   final _childController = TextEditingController();
   final _textController = TextEditingController();
-  WebSocketChannel? _channel;
-
-  Uri _buildWsUri(String base) {
-    final httpUri = Uri.parse(base);
-    final isSecure = httpUri.scheme.toLowerCase() == 'https';
-    return httpUri.replace(scheme: isSecure ? 'wss' : 'ws', path: '/ws');
-  }
 
   @override
   void initState() {
     super.initState();
-  final base = ref.read(apiBaseProvider);
-  final channel = WebSocketChannel.connect(_buildWsUri(base));
-  _channel = channel;
-  ref.read(wsProvider.notifier).state = channel;
-  channel.stream.listen((event) {
+    final base = ref.read(apiBaseProvider);
+    final channel = WebSocketChannel.connect(
+        Uri.parse(base.replaceFirst('http', 'ws') + '/ws'));
+    ref.read(wsProvider.notifier).state = channel;
+    channel.stream.listen((event) {
       try {
         final msg = jsonDecode(event);
-        if (msg is Map && (msg['type'] == 'task_queued' || msg['type'] == 'task_completed')) {
+        if (msg is Map &&
+            (msg['type'] == 'task_queued' || msg['type'] == 'task_completed')) {
           if (msg['type'] == 'task_queued') {
             ref.read(submitStateProvider.notifier).state = 'QUEUED';
           }
@@ -107,12 +105,11 @@ class _HomePageState extends ConsumerState<HomePage> {
             ref.read(submitStateProvider.notifier).state = 'COMPLETED';
           }
           // Refresh list on updates
-          fetchResponses(base).then((items) => ref.read(responsesProvider.notifier).state = items);
+          fetchResponses(base).then(
+              (items) => ref.read(responsesProvider.notifier).state = items);
           if (mounted) {
             final es = _statusEs(ref.read(submitStateProvider) ?? '');
-            final messenger = ScaffoldMessenger.of(context);
-            messenger.hideCurrentSnackBar();
-            messenger.showSnackBar(
+            ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Actualización en tiempo real: $es')),
             );
           }
@@ -125,12 +122,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
-    try {
-      ref.read(wsProvider)?.sink.close();
-    } catch (_) {}
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
+    ref.read(wsProvider)?.sink.close();
     super.dispose();
   }
 
@@ -146,15 +138,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (res.statusCode == 202) {
       try {
         final data = jsonDecode(body.body) as Map<String, dynamic>;
-        ref.read(lastResponseIdProvider.notifier).state = data['response_id'] as int?;
+        ref.read(lastResponseIdProvider.notifier).state =
+            data['response_id'] as int?;
         ref.read(submitStateProvider.notifier).state = 'QUEUED';
       } catch (_) {}
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enviado!')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Enviado!')));
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${res.statusCode} ${body.body}')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: ${res.statusCode} ${body.body}')));
       }
     }
   }
@@ -162,39 +157,50 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-  appBar: AppBar(title: const Text('Formulario')),
+      appBar: AppBar(title: const Text('Formulario')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(controller: _childController, decoration: const InputDecoration(labelText: 'Nombre del niño o niña')), 
+            TextField(
+                controller: _childController,
+                decoration:
+                    const InputDecoration(labelText: 'Nombre del niño o niña')),
             const SizedBox(height: 8),
-            TextField(controller: _textController, decoration: const InputDecoration(labelText: '¿Cómo te sientes hoy?')),
+            TextField(
+                controller: _textController,
+                decoration:
+                    const InputDecoration(labelText: '¿Cómo te sientes hoy?')),
             const SizedBox(height: 16),
             Consumer(builder: (ctx, ref, _) {
               final st = ref.watch(submitStateProvider);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-      FilledButton(onPressed: _submit, child: const Text('Enviar respuesta')),
+                  FilledButton(
+                      onPressed: _submit,
+                      child: const Text('Enviar respuesta')),
                   const SizedBox(height: 8),
-          if (st != null) Text('Estado del envío: ${_statusEs(st)}'),
+                  if (st != null) Text('Estado del envío: ${_statusEs(st)}'),
                 ],
               );
             }),
             const SizedBox(height: 16),
-    FilledButton(onPressed: () => context.go('/list'), child: const Text('Ver respuestas')),
+            FilledButton(
+                onPressed: () => context.go('/list'),
+                child: const Text('Ver respuestas')),
             const SizedBox(height: 8),
             FilledButton(
               onPressed: () {
                 final child = _childController.text.trim();
                 if (child.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa el nombre del niño o niña')));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Ingresa el nombre del niño o niña')));
                 } else {
                   context.go('/dashboard/$child');
                 }
               },
-        child: const Text('Ver panel'),
+              child: const Text('Ver panel'),
             ),
           ],
         ),
@@ -211,11 +217,12 @@ class ListPage extends ConsumerWidget {
     final base = ref.watch(apiBaseProvider);
 
     return Scaffold(
-  appBar: AppBar(title: const Text('Respuestas')),
+      appBar: AppBar(title: const Text('Respuestas')),
       body: FutureBuilder(
         future: fetchResponses(base),
         builder: (ctx, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          if (!snap.hasData)
+            return const Center(child: CircularProgressIndicator());
           final items = snap.data as List<Map<String, dynamic>>;
           return ListView.builder(
             itemCount: items.length,
@@ -242,7 +249,8 @@ class ListPage extends ConsumerWidget {
     try {
       if (created != null) {
         final dt = DateTime.tryParse(created);
-        if (dt != null) fecha = DateFormat('dd/MM/yyyy HH:mm', 'es').format(dt.toLocal());
+        if (dt != null)
+          fecha = DateFormat('dd/MM/yyyy HH:mm', 'es').format(dt.toLocal());
       }
     } catch (_) {}
     final st = _statusEs(r['status'] as String?);
@@ -265,7 +273,7 @@ class DetailPage extends ConsumerWidget {
     final base = ref.watch(apiBaseProvider);
     final id = responseId;
     return Scaffold(
-  appBar: AppBar(title: const Text('Detalle de respuesta')),
+      appBar: AppBar(title: const Text('Detalle de respuesta')),
       body: id == null
           ? const Center(child: Text('ID inválido'))
           : FutureBuilder(
@@ -285,19 +293,25 @@ class DetailPage extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Niño/niña: ${data['child_name']}', style: Theme.of(context).textTheme.titleLarge),
+                        Text('Niño/niña: ${data['child_name']}',
+                            style: Theme.of(context).textTheme.titleLarge),
                         const SizedBox(height: 8),
-                        Text('Emoción: ${data['emotion']} • Estado: ${_statusEs(data['status'] as String?)}'),
+                        Text(
+                            'Emoción: ${data['emotion']} • Estado: ${_statusEs(data['status'] as String?)}'),
                         const SizedBox(height: 16),
-                        Text('Análisis (JSON):', style: Theme.of(context).textTheme.titleMedium),
+                        Text('Análisis (JSON):',
+                            style: Theme.of(context).textTheme.titleMedium),
                         const SizedBox(height: 8),
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surfaceVariant,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Text(const JsonEncoder.withIndent('  ').convert(analysis)),
+                          child: Text(const JsonEncoder.withIndent('  ')
+                              .convert(analysis)),
                         ),
                       ],
                     ),
@@ -326,7 +340,8 @@ class DashboardPage extends ConsumerWidget {
   final String childId;
   const DashboardPage({super.key, required this.childId});
 
-  Future<Map<String, dynamic>?> _fetchDashboard(String base, String child) async {
+  Future<Map<String, dynamic>?> _fetchDashboard(
+      String base, String child) async {
     final r = await http.get(Uri.parse('$base/api/dashboard/$child'));
     if (r.statusCode == 200) return jsonDecode(r.body) as Map<String, dynamic>;
     return null;
@@ -348,8 +363,10 @@ class DashboardPage extends ConsumerWidget {
           }
           final data = snap.data as Map<String, dynamic>;
           final total = data['total'];
-          final byEmotion = (data['by_emotion'] as Map?)?.cast<String, dynamic>() ?? {};
-          final series = (data['series_by_day'] as Map?)?.cast<String, dynamic>() ?? {};
+          final byEmotion =
+              (data['by_emotion'] as Map?)?.cast<String, dynamic>() ?? {};
+          final series =
+              (data['series_by_day'] as Map?)?.cast<String, dynamic>() ?? {};
           final sortedDays = series.keys.toList()..sort();
           final spots = <FlSpot>[];
           for (var i = 0; i < sortedDays.length; i++) {
@@ -361,13 +378,17 @@ class DashboardPage extends ConsumerWidget {
             padding: const EdgeInsets.all(16),
             child: ListView(
               children: [
-                Text('Total respuestas: $total', style: Theme.of(context).textTheme.titleLarge),
+                Text('Total respuestas: $total',
+                    style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 16),
-                Text('Por emoción', style: Theme.of(context).textTheme.titleMedium),
+                Text('Por emoción',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
-                ...byEmotion.entries.map((e) => ListTile(title: Text(e.key), trailing: Text('${e.value}'))),
+                ...byEmotion.entries.map((e) =>
+                    ListTile(title: Text(e.key), trailing: Text('${e.value}'))),
                 const SizedBox(height: 16),
-                Text('Serie por día', style: Theme.of(context).textTheme.titleMedium),
+                Text('Serie por día',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 if (spots.isEmpty)
                   const Text('Aún no hay datos suficientes')
@@ -390,10 +411,12 @@ class DashboardPage extends ConsumerWidget {
                               showTitles: true,
                               getTitlesWidget: (value, meta) {
                                 final idx = value.toInt();
-                                if (idx < 0 || idx >= sortedDays.length) return const SizedBox.shrink();
+                                if (idx < 0 || idx >= sortedDays.length)
+                                  return const SizedBox.shrink();
                                 return Padding(
                                   padding: const EdgeInsets.only(top: 4),
-                                  child: Text(sortedDays[idx], style: const TextStyle(fontSize: 10)),
+                                  child: Text(sortedDays[idx],
+                                      style: const TextStyle(fontSize: 10)),
                                 );
                               },
                               reservedSize: 32,
@@ -401,10 +424,13 @@ class DashboardPage extends ConsumerWidget {
                             ),
                           ),
                           leftTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: true, interval: 1),
+                            sideTitles:
+                                SideTitles(showTitles: true, interval: 1),
                           ),
-                          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                          topTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false)),
+                          rightTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false)),
                         ),
                         gridData: const FlGridData(show: true),
                         borderData: FlBorderData(show: true),
@@ -412,7 +438,8 @@ class DashboardPage extends ConsumerWidget {
                     ),
                   ),
                 const SizedBox(height: 8),
-                ...series.entries.map((e) => ListTile(title: Text(e.key), trailing: Text('${e.value}'))),
+                ...series.entries.map((e) =>
+                    ListTile(title: Text(e.key), trailing: Text('${e.value}'))),
               ],
             ),
           );
