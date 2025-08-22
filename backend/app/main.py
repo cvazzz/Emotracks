@@ -54,6 +54,7 @@ from .models import Alert
 from .alert_rules import RULE_VERSION_V2
 from .alert_rules import evaluate_auto_alerts
 from .models import AppConfig
+from .events import publish_event, CHANNEL as EVENTS_CHANNEL
 
 logger = structlog.get_logger()
 
@@ -168,7 +169,7 @@ try:
     redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
 except Exception:
     redis_client = None  # tests may not have Redis
-WS_CHANNEL = "emotrack:updates"
+WS_CHANNEL = EVENTS_CHANNEL
 
 
 def _safe_publish(channel: str, payload: dict) -> None:
@@ -548,10 +549,7 @@ async def submit_responses(
     row.task_id = task_id
     session.add(row)
     # Notify listeners (WS relay listens on this channel)
-    _safe_publish(
-        WS_CHANNEL,
-        {"type": "task_queued", "task_id": task_id, "response_id": row.id, "status": "QUEUED"},
-    )
+    publish_event("task_queued", task_id=task_id, response_id=row.id, status="QUEUED")
     return JSONResponse(
         status_code=202,
         content={
@@ -871,7 +869,7 @@ def create_response_for_child(child_id: int, payload: CreateChildResponsePayload
         except Exception:
             pass
     task_id = enqueue_analysis_task(task_payload)
-    _safe_publish(WS_CHANNEL, {"type": "task_queued", "task_id": task_id, "response_id": row.id, "status": "QUEUED"})
+    publish_event("task_queued", task_id=task_id, response_id=row.id, status="QUEUED")
     return {"status": "accepted", "task_id": task_id, "response_id": row.id}
 
 

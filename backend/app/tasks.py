@@ -13,6 +13,7 @@ from .metrics import TASK_COUNTER
 from sqlalchemy import select  # (posible uso futuro, no estricto)
 from .settings import settings
 from .audio_utils import normalizar_audio, extraer_features_audio, transcribir_audio, comprimir_audio
+from .events import publish_event
 from .metrics import TRANSCRIPTION_REQUESTS, TRANSCRIPTION_LATENCY
 import os
 import wave
@@ -69,18 +70,7 @@ def transcribe_audio_task(payload: dict) -> dict:
                 except Exception:
                     pass
             # Emitir evento websocket (Redis pub/sub) de transcripción lista
-            try:
-                rds = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-                rds.publish(
-                    "emotrack:updates",
-                    json.dumps({
-                        "type": "transcription_ready",
-                        "response_id": response_id,
-                        "status": "COMPLETED",
-                    })
-                )
-            except Exception:
-                pass
+            publish_event("transcription_ready", response_id=response_id, status="COMPLETED")
             
             try:
                 TRANSCRIPTION_REQUESTS.labels("success").inc()
@@ -115,17 +105,7 @@ def analyze_text_task(payload: dict) -> dict:
     audio_features_extra = {}
     normalized_path = audio_path
     # Emitir evento de inicio de análisis
-    try:
-        r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        r.publish(
-            "emotrack:updates",
-            json.dumps({
-                "type": "analysis_started",
-                "response_id": payload.get("response_id"),
-            })
-        )
-    except Exception:
-        pass
+    publish_event("analysis_started", response_id=payload.get("response_id"))
     if audio_path and settings.enable_audio_features:
         try:
             normalized_path = normalizar_audio(audio_path)
@@ -147,17 +127,7 @@ def analyze_text_task(payload: dict) -> dict:
         except Exception:
             pass
         # Publicar evento de progreso
-        try:
-            r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-            r.publish(
-                "emotrack:updates",
-                json.dumps({
-                    "type": "transcription_queued",
-                    "response_id": payload.get("response_id"),
-                })
-            )
-        except Exception:
-            pass
+    publish_event("transcription_queued", response_id=payload.get("response_id"))
     response_id = payload.get("response_id")
     payload_child_id = payload.get("child_id")
     # Allow forcing intensity (test support) else mock default 0.2 / 0.9 for high text tokens
@@ -239,45 +209,29 @@ def analyze_text_task(payload: dict) -> dict:
                         # Publish alerts via Redis channel
                         if new_alerts:
                             try:
-                                r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
                                 for a in new_alerts:
-                                    r.publish(
-                                        "emotrack:updates",
-                                        json.dumps(
-                                            {
-                                                "type": "alert_created",
-                                                "alert": {
-                                                    "id": a.id,
-                                                    "child_id": a.child_id,
-                                                    "alert_type": a.type,
-                                                    "severity": a.severity,
-                                                    "rule_version": a.rule_version,
-                                                    "message": a.message,
-                                                },
-                                            }
-                                        ),
+                                    publish_event(
+                                        "alert_created",
+                                        alert={
+                                            "id": a.id,
+                                            "child_id": a.child_id,
+                                            "alert_type": a.type,
+                                            "severity": a.severity,
+                                            "rule_version": a.rule_version,
+                                            "message": a.message,
+                                        },
                                     )
                             except Exception:
                                 pass
         except Exception:
             status_label = "error"
             pass
-    try:
-        r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        r.publish(
-            "emotrack:updates",
-            json.dumps(
-                {
-                    "type": "task_completed",
-                    "response_id": response_id,
-                    "status": "COMPLETED",
-                    "emotion": result["primary_emotion"],
-                }
-            ),
-        )
-    except Exception:
-        status_label = "error"
-        pass
+    publish_event(
+        "task_completed",
+        response_id=response_id,
+        status="COMPLETED",
+        emotion=result["primary_emotion"],
+    )
     try:
         TASK_COUNTER.labels(task_name, status_label).inc()
     except Exception:
