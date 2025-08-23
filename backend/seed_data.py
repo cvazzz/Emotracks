@@ -22,7 +22,7 @@ import argparse
 import json
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 import os
 import sys
 
@@ -44,20 +44,26 @@ def _get_session() -> Session:
 
 
 def _create_user(s: Session, email: str, password: str, role: UserRole) -> User:
+    # Si ya existe, devolverlo
+    existing = s.exec(select(User).where(User.email == email)).first()
+    if existing:
+        return existing
     # Intentar usar el flujo normal de creación si está disponible
     try:
         from backend.app.auth import create_user  # type: ignore
 
-        u = create_user(email=email, password=password, role=role.value)
-        s.add(u)
-        s.flush()
-        return u
+        _ = create_user(email=email, password=password, role=role.value)
+        # create_user ya persiste; recargar desde DB
+        created = s.exec(select(User).where(User.email == email)).first()
+        if created:
+            return created
     except Exception:
-        # Fallback: crear directo (requiere hashed_password ya generado en auth; aquí guardamos texto plano solo para demo)
-        u = User(email=email, hashed_password=password, role=role)
-        s.add(u)
-        s.flush()
-        return u
+        pass
+    # Fallback: crear directo (solo demo; almacena texto plano)
+    u = User(email=email, hashed_password=password, role=role)
+    s.add(u)
+    s.flush()
+    return u
 
 
 def _make_analysis(emotion: str, text: str, intensity: float, transcript: str | None = None) -> dict:
