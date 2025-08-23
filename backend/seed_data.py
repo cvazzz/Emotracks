@@ -144,6 +144,9 @@ def run(reset: bool = False) -> None:
 
         s.commit()
         print("Seed completado. Usuario admin: admin@example.com/admin123 — parent: parent@example.com/parent123")
+    # Info adicional: número de respuestas creadas
+    total_responses = len(s.exec(select(Response)).all())
+    print(f"Respuestas en DB: {total_responses}")
 
 
 if __name__ == "__main__":
