@@ -11,6 +11,7 @@ function Show-Help {
     Write-Host "  test       - Ejecuta tests (-q)"
     Write-Host "  openapi    - Genera openapi.json"
     Write-Host "  coverage   - Ejecuta pytest con coverage"
+    Write-Host "  seed       - Crea datos demo (usa SQLite por defecto)"
     Write-Host "  clean      - Limpia artefactos (openapi.json, test.db, __pycache__)"
 }
 
@@ -27,6 +28,9 @@ switch ($Task) {
       python -c "import json, pathlib; from backend.app.main import app; pathlib.Path('openapi.json').write_text(json.dumps(app.openapi(), indent=2)); print('openapi.json generado')"
     }
     'coverage' { pytest --cov=backend.app --cov-report=term-missing }
+      'seed' {
+        python backend/seed_data.py --reset --yes
+      }
     'clean' {
       if (Test-Path openapi.json) { Remove-Item openapi.json }
       if (Test-Path test.db) { Remove-Item test.db }
