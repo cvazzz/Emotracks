@@ -23,6 +23,14 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session
+import os
+import sys
+
+# Ensure project root is on sys.path when running as a script
+_HERE = os.path.dirname(__file__)
+_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from backend.app.db import init_db, engine
 from backend.app.models import UserRole, User, Child, Response, ResponseStatus, Alert

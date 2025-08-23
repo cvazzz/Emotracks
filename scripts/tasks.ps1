@@ -29,7 +29,8 @@ switch ($Task) {
     }
     'coverage' { pytest --cov=backend.app --cov-report=term-missing }
       'seed' {
-        python backend/seed_data.py --reset --yes
+        # Ensure module-style execution for package imports
+        python -m backend.seed_data --reset --yes
       }
     'clean' {
       if (Test-Path openapi.json) { Remove-Item openapi.json }
