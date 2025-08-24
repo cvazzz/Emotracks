@@ -23,6 +23,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
+from sqlalchemy import delete
 import os
 import sys
 
@@ -97,12 +98,11 @@ def _store_analysis(response: Response, analysis: dict) -> None:
 def run(reset: bool = False) -> None:
     with _get_session() as s:
         if reset:
-            # Borrar tablas en orden para respetar FKs en PG; en SQLite simple DELETE funciona.
-            for tbl in ("alert", "response", "child", "user"):
-                try:
-                    s.exec(f"DELETE FROM {tbl}")
-                except Exception:
-                    pass
+            # Borrar con ORM para respetar nombres reales de tablas y FKs
+            s.exec(delete(Alert))
+            s.exec(delete(Response))
+            s.exec(delete(Child))
+            s.exec(delete(User))
             s.commit()
 
         # Usuarios
