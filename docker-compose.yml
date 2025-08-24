@@ -31,6 +31,22 @@ services:
       - redis
     restart: unless-stopped
 
+  seed:
+    build: .
+    command: python -m backend.seed_data --reset --yes
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/emotrack}
+      LOG_LEVEL: INFO
+      ENABLE_ENCRYPTION: ${ENABLE_ENCRYPTION:-0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    volumes:
+      - ./:/app
+    depends_on:
+      - db
+      - redis
+    restart: "no"
+
   redis:
     image: redis:7-alpine
     ports:
