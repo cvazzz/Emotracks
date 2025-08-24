@@ -1,3 +1,31 @@
+# OS / editor
+.DS_Store
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Envs / secrets / local data
+.env
+dev.db
+test.db
+uploads/
+
+# Node/Flutter
+node_modules/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+
+# Docker
+*.log
 # Python
 __pycache__/
 *.pyc
