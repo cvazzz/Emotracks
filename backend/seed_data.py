@@ -97,6 +97,7 @@ def _store_analysis(response: Response, analysis: dict) -> None:
 def run(reset: bool = False) -> None:
     with _get_session() as s:
         if reset:
+            # Borrar tablas en orden para respetar FKs en PG; en SQLite simple DELETE funciona.
             for tbl in ("alert", "response", "child", "user"):
                 try:
                     s.exec(f"DELETE FROM {tbl}")
@@ -105,15 +106,19 @@ def run(reset: bool = False) -> None:
             s.commit()
 
         # Usuarios
-        admin = _create_user(s, "admin@example.com", "admin123", UserRole.ADMIN)
+        _ = _create_user(s, "admin@example.com", "admin123", UserRole.ADMIN)
         parent = _create_user(s, "parent@example.com", "parent123", UserRole.PARENT)
 
-        # Niño
-        child = Child(name="Alex", age=8, parent_id=parent.id)  # type: ignore[arg-type]
-        s.add(child)
-        s.flush()
+        # Niño (get-or-create por (parent_id, name))
+        child = s.exec(
+            select(Child).where(Child.parent_id == parent.id, Child.name == "Alex")  # type: ignore[arg-type]
+        ).first()
+        if not child:
+            child = Child(name="Alex", age=8, parent_id=parent.id)  # type: ignore[arg-type]
+            s.add(child)
+            s.flush()
 
-        # Respuestas
+        # Respuestas demo
         examples = [
             ("Feliz", "Jugué con mis amigos", 0.8),
             ("Triste", "Perdí mi juguete", 0.7),
@@ -136,17 +141,18 @@ def run(reset: bool = False) -> None:
 
         s.flush()
 
-        # Alertas
+        # Alertas demo
         a1 = Alert(child_id=child.id, type="high_intensity", message="Alta intensidad reciente", severity="warning")  # type: ignore[arg-type]
         a2 = Alert(child_id=child.id, type="streak_negative", message="Racha negativa detectada", severity="critical")  # type: ignore[arg-type]
         s.add(a1)
         s.add(a2)
 
         s.commit()
+
+        # Info y conteo
+        total_responses = s.exec(select(Response)).all()
         print("Seed completado. Usuario admin: admin@example.com/admin123 — parent: parent@example.com/parent123")
-    # Info adicional: número de respuestas creadas
-    total_responses = len(s.exec(select(Response)).all())
-    print(f"Respuestas en DB: {total_responses}")
+        print(f"Respuestas en DB: {len(total_responses)}")
 
 
 if __name__ == "__main__":
@@ -162,20 +168,3 @@ if __name__ == "__main__":
             raise SystemExit(1)
 
     run(reset=args.reset)
-from backend.app.db import init_db, session_scope
-from backend.app.models import Response, ResponseStatus
-
-
-def main():
-    init_db()
-    with session_scope() as s:
-        if s.query(Response).count() == 0:
-            s.add(Response(child_name="Ana", emotion="Feliz", status=ResponseStatus.COMPLETED))
-            s.add(Response(child_name="Luis", emotion="Triste", status=ResponseStatus.COMPLETED))
-            print("Seeded 2 responses.")
-        else:
-            print("Responses already exist; skipping.")
-
-
-if __name__ == "__main__":
-    main()
