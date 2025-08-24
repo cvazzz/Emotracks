@@ -37,6 +37,7 @@ from backend.app.db import init_db, engine
 from backend.app.models import UserRole, User, Child, Response, ResponseStatus, Alert
 from backend.app.settings import settings
 from backend.app.crypto_utils import encrypt_text
+from passlib.hash import pbkdf2_sha256
 
 
 def _get_session() -> Session:
@@ -49,19 +50,9 @@ def _create_user(s: Session, email: str, password: str, role: UserRole) -> User:
     existing = s.exec(select(User).where(User.email == email)).first()
     if existing:
         return existing
-    # Intentar usar el flujo normal de creación si está disponible
-    try:
-        from backend.app.auth import create_user  # type: ignore
-
-        _ = create_user(email=email, password=password, role=role.value)
-        # create_user ya persiste; recargar desde DB
-        created = s.exec(select(User).where(User.email == email)).first()
-        if created:
-            return created
-    except Exception:
-        pass
-    # Fallback: crear directo (solo demo; almacena texto plano)
-    u = User(email=email, hashed_password=password, role=role)
+    # Crear directo para seed, evitando dependencias de bcrypt
+    hashed = pbkdf2_sha256.hash(password)
+    u = User(email=email, hashed_password=hashed, role=role)
     s.add(u)
     s.flush()
     return u
